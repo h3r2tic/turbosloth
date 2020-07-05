@@ -31,11 +31,8 @@ struct Lazy<T: LazyReqs> {
 }
 
 impl<T: LazyReqs + Sync> Lazy<T> {
-    fn shared(self) -> SharedLazy<T> {
-        SharedLazy {
-            worker: Arc::new(self.worker),
-            identity: self.identity,
-        }
+    fn shared(self) -> Arc<Lazy<T>> {
+        Arc::new(self)
     }
 }
 
@@ -43,21 +40,6 @@ impl<T: LazyReqs> Clone for Lazy<T> {
     fn clone(&self) -> Self {
         Self {
             worker: self.worker.clone_boxed(),
-            identity: self.identity,
-        }
-    }
-}
-
-#[derive(Clone)]
-struct SharedLazy<T: LazyReqs> {
-    worker: Arc<Box<dyn LazyWorker<T>>>,
-    identity: u64,
-}
-
-impl<T: LazyReqs> SharedLazy<T> {
-    fn cloned(&self) -> Self {
-        Self {
-            worker: self.worker.clone(),
             identity: self.identity,
         }
     }
@@ -75,47 +57,74 @@ impl CacheDb {
     }
 }
 
-#[derive(Clone)]
-struct Cache(Arc<CacheDb>);
+trait EvalLazy<T: LazyReqs> {
+    type Output;
+    fn eval(
+        self,
+        cache: &Cache,
+    ) -> Pin<Box<dyn Future<Output = Result<Self::Output>> + Send + Sync + 'static>>;
+}
 
-impl Cache {
-    fn eval<T: LazyReqs>(&self, lazy: Lazy<T>) -> impl Future<Output = Result<T>> {
-        let worker = lazy.worker;
-        let cache = self.clone();
-        async move {
+impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
+    type Output = T;
+
+    fn eval(
+        self,
+        cache: &Cache,
+    ) -> Pin<Box<dyn Future<Output = Result<Self::Output>> + Send + Sync + 'static>> {
+        let worker = self.worker;
+        let cache = cache.clone();
+
+        Box::pin(async move {
             let worker = worker.run(cache);
             let res: T = tokio::task::spawn(worker).await??;
             Ok(res)
-        }
+        })
     }
+}
 
-    fn eval_shared<T: LazyReqs + Sync>(
-        &self,
-        lazy: SharedLazy<T>,
-    ) -> impl Future<Output = Result<Arc<T>>> {
-        let worker = lazy.worker.clone_boxed();
-        let db = self.0.clone();
+impl<T: LazyReqs + Sync> EvalLazy<T> for Arc<Lazy<T>> {
+    type Output = Arc<T>;
+    fn eval(
+        self,
+        cache: &Cache,
+    ) -> Pin<Box<dyn Future<Output = Result<Self::Output>> + Send + Sync + 'static>> {
+        let worker = self.worker.clone_boxed();
+        let db = cache.0.clone();
 
         let cached_val = {
             let db_vals = db.values.read().unwrap();
-            db_vals.get(&lazy.identity).cloned()
+            db_vals.get(&self.identity).cloned()
         };
 
-        let cache = self.clone();
+        let cache = cache.clone();
+        let identity = self.identity;
 
-        async move {
+        Box::pin(async move {
             if let Some(cached) = cached_val {
                 Ok(cached
                     .downcast::<T>()
-                    .map_err(|e| anyhow!("Could not downcast cached value"))?)
+                    .map_err(|e| anyhow!("Could not downcast cached value: {:?}", e))?)
             } else {
                 let worker = worker.run(cache);
                 let res: Arc<T> = Arc::new(tokio::task::spawn(worker).await??);
                 let mut db_vals = db.values.write().unwrap();
-                db_vals.insert(lazy.identity, res.clone());
+                db_vals.insert(identity, res.clone());
                 Ok(res)
             }
-        }
+        })
+    }
+}
+
+#[derive(Clone)]
+struct Cache(Arc<CacheDb>);
+
+impl Cache {
+    fn eval<T: LazyReqs, L: EvalLazy<T>>(
+        &self,
+        lazy: L,
+    ) -> impl Future<Output = Result<L::Output>> {
+        lazy.eval(self)
     }
 }
 
@@ -143,7 +152,7 @@ impl ToLazy for i32 {
 impl LazyWorker<i32> for i32 {
     fn run(
         self: Box<Self>,
-        cache: Cache,
+        _: Cache,
     ) -> Pin<Box<dyn Future<Output = Result<i32>> + Send + Sync + 'static>> {
         Box::pin(async move { Ok(*self) })
     }
@@ -156,14 +165,13 @@ impl LazyWorker<i32> for i32 {
 #[derive(Clone)]
 struct Add {
     a: Lazy<i32>,
-    b: SharedLazy<i32>,
+    b: Arc<Lazy<i32>>,
 }
 
 impl ToLazy for Add {
     type Output = i32;
 
-    fn lazy(self, cache: &Cache) -> Lazy<Self::Output> {
-        let cache = cache.clone();
+    fn lazy(self, _: &Cache) -> Lazy<Self::Output> {
         Lazy {
             identity: self.a.identity * 12345 + self.b.identity, // TODO: hash
             worker: Box::new(self),
@@ -178,7 +186,7 @@ impl LazyWorker<i32> for Add {
     ) -> Pin<Box<dyn Future<Output = Result<i32>> + Send + Sync + 'static>> {
         Box::pin(async move {
             let a = cache.eval(self.a).await?;
-            let b = cache.eval_shared(self.b.cloned()).await?;
+            let b = cache.eval(self.b.clone()).await?;
             println!("running Add({}, {})", a, *b);
             Ok(a + *b)
         })
@@ -200,7 +208,7 @@ fn main() -> Result<()> {
     let mut runtime = Runtime::new()?;
     dbg!(runtime.block_on(db.eval(d.clone())).unwrap());
     dbg!(runtime.block_on(db.eval(d)).unwrap());
-    dbg!(runtime.block_on(db.eval_shared(c)).unwrap());
+    dbg!(runtime.block_on(db.eval(c)).unwrap());
 
     Ok(())
 }
