@@ -53,9 +53,9 @@ impl<T: LazyReqs + Sync> Lazy<T> {
         Arc::new(self)
     }
 
-    pub fn rebind(&mut self, _new_val: impl ToLazy) {
+    /*pub fn rebind<RetVal: ToLazy>(&mut self, _rebind_fn: impl Fn(Self) -> RetVal) {
         todo!();
-    }
+    }*/
 }
 
 impl<T: LazyReqs> Clone for Lazy<T> {
@@ -68,12 +68,24 @@ impl<T: LazyReqs> Clone for Lazy<T> {
 }
 
 pub trait LazyFeedback<T: LazyReqs> {
-    fn feedback(self) -> (Lazy<T>, Lazy<T>);
+    fn feedback(self) -> (Arc<Lazy<T>>, LazyFeedbackTarget<T>);
 }
 
 impl<T: LazyReqs + Sync> LazyFeedback<T> for Lazy<T> {
-    fn feedback(self) -> (Lazy<T>, Lazy<T>) {
+    fn feedback(self) -> (Arc<Lazy<T>>, LazyFeedbackTarget<T>) {
         todo!()
+    }
+}
+
+pub struct LazyFeedbackTarget<T: LazyReqs> {
+    inner: Lazy<T>,
+}
+
+impl<T: LazyReqs + Sync> LazyFeedbackTarget<T> {
+    pub fn rebind<RetVal: ToLazy>(self, _rebind_fn: impl Fn(Lazy<T>) -> RetVal) -> Lazy<T> {
+        //todo!();
+        // TODO
+        self.inner
     }
 }
 
