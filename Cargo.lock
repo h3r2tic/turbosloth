@@ -18,16 +18,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "burr"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "tokio",
- "twox-hash",
-]
-
-[[package]]
 name = "bytes"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -238,6 +228,16 @@ dependencies = [
  "bytes",
  "num_cpus",
  "pin-project-lite",
+]
+
+[[package]]
+name = "turbosloth"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "tokio",
+ "twox-hash",
 ]
 
 [[package]]
