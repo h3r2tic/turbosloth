@@ -1,12 +1,8 @@
+use crate::cache::*;
+
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use std::{
-    any::Any,
-    collections::HashMap,
-    future::Future,
-    pin::Pin,
-    sync::{Arc, RwLock},
-};
+use std::{any::Any, future::Future, pin::Pin, sync::Arc};
 
 pub trait LazyReqs: Any + Sized + Send + 'static {}
 impl<T: Any + Sized + Send + 'static> LazyReqs for T {}
@@ -68,18 +64,6 @@ impl<T: LazyReqs> Clone for Lazy<T> {
             worker: self.worker.clone_boxed(),
             identity: self.identity,
         }
-    }
-}
-
-pub struct CacheDb {
-    values: RwLock<HashMap<u64, Arc<dyn Any + Send + Sync>>>,
-}
-
-impl CacheDb {
-    pub fn create() -> Cache {
-        Cache(Arc::new(Self {
-            values: RwLock::new(Default::default()),
-        }))
     }
 }
 
@@ -152,18 +136,6 @@ impl<T: LazyReqs + Sync> EvalLazy<T> for Arc<Lazy<T>> {
         })
     }
 }
-
-#[derive(Clone)]
-pub struct Cache(Arc<CacheDb>);
-/*
-impl Cache {
-    fn eval<T: LazyReqs, L: EvalLazy<T>>(
-        &self,
-        lazy: L,
-    ) -> impl Future<Output = Result<L::Output>> {
-        lazy.eval(self)
-    }
-}*/
 
 pub trait ToLazy
 where

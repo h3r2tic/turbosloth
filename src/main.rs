@@ -8,7 +8,10 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 
+mod cache;
 mod lazy;
+
+use cache::*;
 use lazy::*;
 
 impl ToLazy for i32 {
