@@ -70,11 +70,11 @@ impl LazyWorker for MutAdd {
     type Output = i32;
 
     async fn run(self, cache: Cache) -> Result<Self::Output> {
-        let mut a = self.a.eval(&cache).await?;
         let b = self.b.clone().eval(&cache).await?;
+        let mut a = self.a.eval(&cache).await?;
         //println!("running Add({}, {})", a, *b);
-        a += *b;
-        Ok(a)
+        *a += *b;
+        Ok(0i32) // TODO
     }
 }
 

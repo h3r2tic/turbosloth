@@ -2,6 +2,7 @@ use crate::cache::*;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use std::marker::PhantomData;
 use std::{any::Any, future::Future, pin::Pin, sync::Arc};
 
 pub trait LazyReqs: Any + Sized + Send + 'static {}
@@ -97,8 +98,32 @@ pub trait EvalLazy<T: LazyReqs> {
     ) -> Pin<Box<dyn Future<Output = Result<Self::Output>> + Send + 'static>>;
 }
 
+// Could be used for getting exclusive access to a non-shared Lazy<T>.
+// By denying `Send`, the mutable variable needs to be accessed last in the worker,
+// Thus making it more difficult to mutate it, or trying to lock it before other
+// variables have been evaluated. If they used `prev` values of the variable
+// that's about to be mutated, those will get the correct value.
+//
+// Not really enforceable, since T could be Arc<Rwlock<_>>, and the user
+// can still shoot themselves in the foot with `.write()`, and enjoy deadlocks.
+#[derive(Debug)]
+pub struct NoSend<T>(T, PhantomData<*const ()>);
+
+impl<T> std::ops::Deref for NoSend<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> std::ops::DerefMut for NoSend<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
-    type Output = T;
+    type Output = NoSend<T>;
 
     fn eval(
         self,
@@ -110,7 +135,7 @@ impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
         Box::pin(async move {
             let worker = worker.run_boxed(cache);
             let res: T = tokio::task::spawn(worker).await??;
-            Ok(res)
+            Ok(NoSend(res, PhantomData))
         })
     }
 }
