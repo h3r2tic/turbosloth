@@ -122,6 +122,7 @@ impl<T> std::ops::DerefMut for NoSend<T> {
     }
 }
 
+// TODO: validate at runtime that a shared ref does not exist for this item
 impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
     type Output = NoSend<T>;
 

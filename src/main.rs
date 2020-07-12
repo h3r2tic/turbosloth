@@ -67,14 +67,14 @@ impl ToLazy for MutAdd {
 
 #[async_trait]
 impl LazyWorker for MutAdd {
-    type Output = i32;
+    type Output = ();
 
     async fn run(self, cache: Cache) -> Result<Self::Output> {
         let b = self.b.clone().eval(&cache).await?;
         let mut a = self.a.eval(&cache).await?;
-        //println!("running Add({}, {})", a, *b);
+        println!("running MutAdd({}, {})", *a, *b);
         *a += *b;
-        Ok(0i32) // TODO
+        Ok(())
     }
 }
 
