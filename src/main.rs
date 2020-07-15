@@ -48,7 +48,7 @@ impl LazyWorker for Add {
     async fn run(self, cache: Cache) -> Result<Self::Output> {
         let a = self.a.eval(&cache).await?;
         let b = self.b.eval(&cache).await?;
-        println!("running Add({}, {})", a, b);
+        println!("running Add({}, {})", *a, *b);
         Ok(*a + *b)
     }
 }
@@ -78,7 +78,7 @@ impl LazyWorker for MutAdd {
     }
 }
 
-fn main() -> Result<()> {
+fn try_main() -> Result<()> {
     let a = 1i32.lazy().shared();
     let b = 2i32.lazy().shared();
     let c = Add { a, b }.lazy().shared();
@@ -110,9 +110,19 @@ fn main() -> Result<()> {
         b: 1i32.lazy().shared(),
     });
 
-    dbg!(runtime.block_on(c.eval(&cache))?);
+    dbg!(*runtime.block_on(c.eval(&cache))?);
     dbg!(runtime.block_on(d.eval(&cache))?);
     dbg!(runtime.block_on(f.clone().eval(&cache))?);
 
     Ok(())
+}
+
+fn main() {
+    if let Err(err) = try_main() {
+        eprintln!("ERROR: {:?}", err);
+        err.chain()
+            .skip(1)
+            .for_each(|cause| eprintln!("because: {}", cause));
+        std::process::exit(1);
+    }
 }

@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 use std::{
     any::Any,
     collections::HashMap,
@@ -5,13 +7,13 @@ use std::{
 };
 
 pub struct CacheDb {
-    pub(crate) values: RwLock<HashMap<u64, Arc<dyn Any + Send + Sync>>>,
+    //pub(crate) values: RwLock<HashMap<u64, Arc<dyn Any + Send + Sync>>>,
 }
 
 impl CacheDb {
     pub fn create() -> Cache {
         Cache(Arc::new(Self {
-            values: RwLock::new(Default::default()),
+            //values: RwLock::new(Default::default()),
         }))
     }
 }
