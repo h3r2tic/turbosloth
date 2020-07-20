@@ -126,3 +126,32 @@ fn main() {
         std::process::exit(1);
     }
 }
+
+// Two kinds of feedback:
+// * mutable ref: in-place update a resource
+//     * rebind nominal value without creating a copy
+//     * quite special; can't include itself in eval tree
+// * double-backed: current and previous values are distinct instances
+//     * TAA and company
+//     * regular temporal loop; publishes a new value in every iteration
+
+// Can we use the Rust borrow checker to validate usage?
+
+struct Thing {
+    ver: i32,
+}
+
+fn mut_thing(a: &mut Thing) {
+    a.ver += 1;
+}
+
+fn use_thing(a: &Thing) {}
+
+fn proto() {
+    let mut a = Thing { ver: 0 };
+    mut_thing(&mut a);
+    use_thing(&a);
+    mut_thing(&mut a);
+    use_thing(&a);
+    use_thing(&a);
+}

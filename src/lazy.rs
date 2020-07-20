@@ -182,7 +182,8 @@ impl<T: LazyReqs + Sync> LazyFeedbackTarget<T> {
     {
         //todo!();
         // TODO
-        rebind_fn(self.prev).lazy()
+        let res = rebind_fn(self.prev).lazy();
+        todo!()
     }
 }
 
