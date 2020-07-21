@@ -24,15 +24,15 @@ impl ToLazy for i32 {
 impl LazyWorker for i32 {
     type Output = i32;
 
-    async fn run(self, _: Cache) -> Result<Self::Output> {
+    async fn run(self, _: Arc<Cache>) -> Result<Self::Output> {
         Ok(self)
     }
 }
 
 #[derive(Clone)]
 struct Add {
-    a: Arc<Lazy<i32>>,
-    b: Arc<Lazy<i32>>,
+    a: Lazy<i32>,
+    b: Lazy<i32>,
 }
 
 impl ToLazy for Add {
@@ -45,24 +45,25 @@ impl ToLazy for Add {
 impl LazyWorker for Add {
     type Output = i32;
 
-    async fn run(self, cache: Cache) -> Result<Self::Output> {
-        let a = self.a.eval(&cache).await?;
-        let b = self.b.eval(&cache).await?;
+    async fn run(self, _cache: Arc<Cache>) -> Result<Self::Output> {
+        let a = self.a.eval().await?;
+        let b = self.b.eval().await?;
         println!("running Add({}, {})", *a, *b);
         Ok(*a + *b)
     }
 }
 
 fn try_main() -> Result<()> {
-    let a = 1i32.lazy().shared();
-    let b = 2i32.lazy().shared();
-    let c = Add { a, b }.lazy().shared();
+    let cache = Cache::create();
 
-    let cache = CacheDb::create();
+    let a = 1i32.lazy(&cache);
+    let b = 2i32.lazy(&cache);
+    let c = Add { a, b }.lazy(&cache);
+
     let mut runtime = Runtime::new()?;
 
-    dbg!(*runtime.block_on(c.clone().eval(&cache))?);
-    dbg!(*runtime.block_on(c.clone().eval(&cache))?);
+    dbg!(*runtime.block_on(c.eval())?);
+    dbg!(*runtime.block_on(c.eval())?);
 
     Ok(())
 }

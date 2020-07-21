@@ -16,7 +16,7 @@ impl<T: Any + Sized + Send + 'static> LazyReqs for T {}
 pub trait LazyWorker: Send + Sync + 'static {
     type Output: LazyReqs;
 
-    async fn run(self, cache: Cache) -> Result<Self::Output>;
+    async fn run(self, cache: Arc<Cache>) -> Result<Self::Output>;
 }
 
 pub trait LazyWorkerEx<T: LazyReqs> {
@@ -24,7 +24,7 @@ pub trait LazyWorkerEx<T: LazyReqs> {
 
     fn run_boxed(
         self: Box<Self>,
-        cache: Cache,
+        cache: Arc<Cache>,
     ) -> Pin<Box<dyn Future<Output = Result<T>> + Send + 'static>>;
 }
 
@@ -38,7 +38,7 @@ where
 
     fn run_boxed(
         self: Box<Self>,
-        cache: Cache,
+        cache: Arc<Cache>,
     ) -> Pin<Box<dyn Future<Output = Result<T>> + Send + 'static>> {
         (*self).run(cache)
     }
@@ -80,14 +80,9 @@ impl<T: LazyReqs> BuildResult<T> {
 }
 
 pub struct Lazy<T: LazyReqs> {
-    pub payload: LazyPayload<T>,
+    pub payload: Arc<LazyPayload<T>>,
     pub identity: u64,
-}
-
-impl<T: LazyReqs + Sync> Lazy<T> {
-    pub fn shared(self) -> Arc<Lazy<T>> {
-        Arc::new(self)
-    }
+    cache: Arc<Cache>,
 }
 
 impl<T: LazyReqs> Clone for Lazy<T> {
@@ -95,48 +90,25 @@ impl<T: LazyReqs> Clone for Lazy<T> {
         Self {
             payload: self.payload.clone(),
             identity: self.identity,
+            cache: self.cache.clone(),
         }
     }
 }
 
 pub trait EvalLazy<T: LazyReqs> {
     type Output;
-    fn eval(
-        self,
-        cache: &Cache,
-    ) -> Pin<Box<dyn Future<Output = Result<Self::Output>> + Send + 'static>>;
+    fn eval(&self) -> Pin<Box<dyn Future<Output = Result<Self::Output>> + Send + 'static>>;
 }
 
-impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
-    type Output = T;
-
-    fn eval(
-        self,
-        cache: &Cache,
-    ) -> Pin<Box<dyn Future<Output = Result<Self::Output>> + Send + 'static>> {
-        let worker = self.payload.worker;
-        let cache = cache.clone();
-
-        Box::pin(async move {
-            let worker = worker.run_boxed(cache);
-            let res: T = tokio::task::spawn(worker).await??;
-            Ok(res)
-        })
-    }
-}
-
-impl<T: LazyReqs + Sync> EvalLazy<T> for Arc<Lazy<T>> {
+impl<T: LazyReqs + Sync> EvalLazy<T> for Lazy<T> {
     type Output = Arc<T>;
 
-    fn eval(
-        self,
-        cache: &Cache,
-    ) -> Pin<Box<dyn Future<Output = Result<Self::Output>> + Send + 'static>> {
+    fn eval(&self) -> Pin<Box<dyn Future<Output = Result<Self::Output>> + Send + 'static>> {
         // HACK; TODO: check if build result doesn't exist or is stale
         if self.payload.build_result.is_none() {
             let worker = self.payload.worker.clone_boxed();
             let build_result = self.payload.build_result.clone();
-            let cache = cache.clone();
+            let cache = self.cache.clone();
 
             Box::pin(async move {
                 let worker = worker.run_boxed(cache);
@@ -163,13 +135,16 @@ pub trait ToLazy
 where
     Self: LazyWorker + Sized + Clone,
 {
-    fn lazy(self) -> Lazy<<Self as LazyWorker>::Output> {
+    fn lazy(self, cache: &Arc<Cache>) -> Lazy<<Self as LazyWorker>::Output> {
+        // TODO: find identical entry in the cache
+
         Lazy {
             identity: self.identity(),
-            payload: LazyPayload {
+            payload: Arc::new(LazyPayload {
                 worker: Box::new(self),
                 build_result: Default::default(),
-            },
+            }),
+            cache: cache.clone(),
         }
     }
 

@@ -6,20 +6,18 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-pub struct CacheDb {
+pub struct Cache {
     //pub(crate) values: RwLock<HashMap<u64, Arc<dyn Any + Send + Sync>>>,
 }
 
-impl CacheDb {
-    pub fn create() -> Cache {
-        Cache(Arc::new(Self {
+impl Cache {
+    pub fn create() -> Arc<Cache> {
+        Arc::new(Self {
             //values: RwLock::new(Default::default()),
-        }))
+        })
     }
 }
 
-#[derive(Clone)]
-pub struct Cache(pub Arc<CacheDb>);
 /*
 impl Cache {
     fn eval<T: LazyReqs, L: EvalLazy<T>>(
