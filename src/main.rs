@@ -45,9 +45,9 @@ impl ToLazy for AddLazy {
 impl LazyWorker for AddLazy {
     type Output = i32;
 
-    async fn run(self, _: Arc<Cache>) -> Result<Self::Output> {
-        let a = self.a.eval().await?;
-        let b = self.b.eval().await?;
+    async fn run(self, cache: Arc<Cache>) -> Result<Self::Output> {
+        let a = self.a.eval(&cache).await?;
+        let b = self.b.eval(&cache).await?;
         println!("running AddLazy({}, {})", *a, *b);
         Ok(*a + *b)
     }
@@ -76,21 +76,20 @@ impl LazyWorker for Add {
 }
 
 fn try_main() -> Result<()> {
+    let a = 1i32.lazy();
+    let b = 2i32.lazy();
+    let c = AddLazy { a, b }.lazy();
+
+    let d1 = Add { a: 5, b: 7 }.lazy();
+    let d2 = Add { a: 5, b: 7 }.lazy();
+
     let cache = Cache::create();
-
-    let a = 1i32.lazy(&cache);
-    let b = 2i32.lazy(&cache);
-    let c = AddLazy { a, b }.lazy(&cache);
-
-    let d1 = Add { a: 5, b: 7 }.lazy(&cache);
-    let d2 = Add { a: 5, b: 7 }.lazy(&cache);
-
     let mut runtime = Runtime::new()?;
 
-    dbg!(*runtime.block_on(c.eval())?);
-    dbg!(*runtime.block_on(c.eval())?);
-    dbg!(*runtime.block_on(d1.eval())?);
-    dbg!(*runtime.block_on(d2.eval())?);
+    dbg!(*runtime.block_on(c.eval(&cache))?);
+    dbg!(*runtime.block_on(c.eval(&cache))?);
+    dbg!(*runtime.block_on(d1.eval(&cache))?);
+    dbg!(*runtime.block_on(d2.eval(&cache))?);
 
     Ok(())
 }

@@ -6,7 +6,7 @@ use std::{
     any::Any,
     future::Future,
     pin::Pin,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
 };
 
 pub trait LazyReqs: Any + Sized + Send + Sync + 'static {}
@@ -79,33 +79,72 @@ impl<T: LazyReqs> BuildResult<T> {
     }
 }
 
+enum LazyInner<T: LazyReqs> {
+    Cached(Arc<LazyPayload<T>>),
+    Isolated(Arc<dyn LazyWorkerObj<T>>),
+}
+
+impl<T: LazyReqs> Clone for LazyInner<T> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Cached(cached) => Self::Cached(cached.clone()),
+            Self::Isolated(isolated) => Self::Isolated(isolated.clone()),
+        }
+    }
+}
+
 pub struct Lazy<T: LazyReqs> {
-    pub payload: Arc<LazyPayload<T>>,
+    inner: Mutex<LazyInner<T>>,
     pub identity: u64,
-    cache: Arc<Cache>,
 }
 
 impl<T: LazyReqs> Clone for Lazy<T> {
     fn clone(&self) -> Self {
         Self {
-            payload: self.payload.clone(),
+            inner: Mutex::new(self.inner.lock().unwrap().clone()),
             identity: self.identity,
-            cache: self.cache.clone(),
         }
     }
 }
 
 pub trait EvalLazy<T: LazyReqs> {
-    fn eval(&self) -> Pin<Box<dyn Future<Output = Result<Arc<T>>> + Send + 'static>>;
+    fn eval(
+        &self,
+        cache: &Arc<Cache>,
+    ) -> Pin<Box<dyn Future<Output = Result<Arc<T>>> + Send + 'static>>;
 }
 
 impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
-    fn eval(&self) -> Pin<Box<dyn Future<Output = Result<Arc<T>>> + Send + 'static>> {
+    fn eval(
+        &self,
+        cache: &Arc<Cache>,
+    ) -> Pin<Box<dyn Future<Output = Result<Arc<T>>> + Send + 'static>> {
+        let payload = {
+            let mut inner = self.inner.lock().unwrap();
+
+            match &mut *inner {
+                LazyInner::Cached(cached) => cached.clone(),
+                LazyInner::Isolated(isolated) => {
+                    let worker = isolated.clone_boxed();
+                    let cached = cache.get_or_insert_with(self.identity, move || LazyPayload {
+                        worker,
+                        build_result: Default::default(),
+                    });
+
+                    let result = cached.clone();
+
+                    // Connect to cache, and return the cached payload
+                    *inner = LazyInner::Cached(cached);
+                    result
+                }
+            }
+        };
+
         // HACK; TODO: check if build result doesn't exist or is stale
-        if self.payload.build_result.is_none() {
-            let worker = self.payload.worker.clone_boxed();
-            let build_result = self.payload.build_result.clone();
-            let cache = self.cache.clone();
+        if payload.build_result.is_none() {
+            let worker = payload.worker.clone_boxed();
+            let build_result = payload.build_result.clone();
+            let cache = cache.clone();
 
             Box::pin(async move {
                 let worker = worker.run_boxed(cache);
@@ -121,7 +160,7 @@ impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
             })
         } else {
             let v: Arc<T> =
-                Option::<&Arc<_>>::cloned(self.payload.build_result.value.read().unwrap().as_ref())
+                Option::<&Arc<_>>::cloned(payload.build_result.value.read().unwrap().as_ref())
                     .expect("a valid build result");
             Box::pin(async move { Ok(v) })
         }
@@ -132,20 +171,12 @@ pub trait ToLazy
 where
     Self: LazyWorker + Sized + Clone,
 {
-    fn lazy(self, cache: &Arc<Cache>) -> Lazy<<Self as LazyWorker>::Output> {
+    fn lazy(self) -> Lazy<<Self as LazyWorker>::Output> {
         let identity = self.identity();
-
-        let payload = cache.get_or_insert_with(self.identity(), || LazyPayload {
-            worker: Box::new(self),
-            build_result: Default::default(),
-        });
-
-        // TODO: find identical entry in the cache
 
         Lazy {
             identity: identity,
-            payload,
-            cache: cache.clone(),
+            inner: Mutex::new(LazyInner::Isolated(Arc::new(self))),
         }
     }
 
