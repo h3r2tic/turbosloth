@@ -58,7 +58,7 @@ pub struct LazyPayload<T: LazyReqs> {
 impl<T: LazyReqs> Clone for LazyPayload<T> {
     fn clone(&self) -> Self {
         Self {
-            worker: self.worker.clone_boxed().into(),
+            worker: self.worker.clone_boxed(),
             build_result: Default::default(),
         }
     }
@@ -196,7 +196,7 @@ where
         let identity = self.identity();
 
         Lazy {
-            identity: identity,
+            identity,
             inner: Mutex::new(LazyInner::Isolated(Arc::new(self))),
         }
     }

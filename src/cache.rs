@@ -47,19 +47,19 @@ impl<T: LazyReqs> TypedCacheObj for TypedCache<T> {
             std::collections::hash_map::Entry::Occupied(mut existing) => {
                 if let Some(existing) = existing.get().upgrade() {
                     // Entry exists and is still valid
-                    return existing;
+                    existing
                 } else {
                     // Entry exists, but the weak pointer is dead. Re-create.
                     let res = Arc::downcast::<LazyPayload<T>>((create_fn)()).unwrap();
                     *existing.get_mut() = Arc::downgrade(&res);
-                    return res;
+                    res
                 }
             }
             std::collections::hash_map::Entry::Vacant(vacant) => {
                 // Entry does not exist
                 let res = Arc::downcast::<LazyPayload<T>>((create_fn)()).unwrap();
                 vacant.insert(Arc::downgrade(&res));
-                return res;
+                res
             }
         }
     }
