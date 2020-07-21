@@ -9,8 +9,8 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-pub trait LazyReqs: Any + Sized + Send + 'static {}
-impl<T: Any + Sized + Send + 'static> LazyReqs for T {}
+pub trait LazyReqs: Any + Sized + Send + Sync + 'static {}
+impl<T: Any + Sized + Send + Sync + 'static> LazyReqs for T {}
 
 #[async_trait]
 pub trait LazyWorker: Send + Sync + 'static {
@@ -96,14 +96,11 @@ impl<T: LazyReqs> Clone for Lazy<T> {
 }
 
 pub trait EvalLazy<T: LazyReqs> {
-    type Output;
-    fn eval(&self) -> Pin<Box<dyn Future<Output = Result<Self::Output>> + Send + 'static>>;
+    fn eval(&self) -> Pin<Box<dyn Future<Output = Result<Arc<T>>> + Send + 'static>>;
 }
 
-impl<T: LazyReqs + Sync> EvalLazy<T> for Lazy<T> {
-    type Output = Arc<T>;
-
-    fn eval(&self) -> Pin<Box<dyn Future<Output = Result<Self::Output>> + Send + 'static>> {
+impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
+    fn eval(&self) -> Pin<Box<dyn Future<Output = Result<Arc<T>>> + Send + 'static>> {
         // HACK; TODO: check if build result doesn't exist or is stale
         if self.payload.build_result.is_none() {
             let worker = self.payload.worker.clone_boxed();
@@ -123,7 +120,7 @@ impl<T: LazyReqs + Sync> EvalLazy<T> for Lazy<T> {
                 }
             })
         } else {
-            let v: Self::Output =
+            let v: Arc<T> =
                 Option::<&Arc<_>>::cloned(self.payload.build_result.value.read().unwrap().as_ref())
                     .expect("a valid build result");
             Box::pin(async move { Ok(v) })
@@ -136,14 +133,18 @@ where
     Self: LazyWorker + Sized + Clone,
 {
     fn lazy(self, cache: &Arc<Cache>) -> Lazy<<Self as LazyWorker>::Output> {
+        let identity = self.identity();
+
+        let payload = cache.get_or_insert_with(self.identity(), || LazyPayload {
+            worker: Box::new(self),
+            build_result: Default::default(),
+        });
+
         // TODO: find identical entry in the cache
 
         Lazy {
-            identity: self.identity(),
-            payload: Arc::new(LazyPayload {
-                worker: Box::new(self),
-                build_result: Default::default(),
-            }),
+            identity: identity,
+            payload,
             cache: cache.clone(),
         }
     }

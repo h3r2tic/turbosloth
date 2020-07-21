@@ -30,14 +30,38 @@ impl LazyWorker for i32 {
 }
 
 #[derive(Clone)]
-struct Add {
+struct AddLazy {
     a: Lazy<i32>,
     b: Lazy<i32>,
 }
 
-impl ToLazy for Add {
+impl ToLazy for AddLazy {
     fn identity(&self) -> u64 {
         self.a.identity * 12345 + self.b.identity // TODO: hash
+    }
+}
+
+#[async_trait]
+impl LazyWorker for AddLazy {
+    type Output = i32;
+
+    async fn run(self, _: Arc<Cache>) -> Result<Self::Output> {
+        let a = self.a.eval().await?;
+        let b = self.b.eval().await?;
+        println!("running AddLazy({}, {})", *a, *b);
+        Ok(*a + *b)
+    }
+}
+
+#[derive(Clone)]
+struct Add {
+    a: i32,
+    b: i32,
+}
+
+impl ToLazy for Add {
+    fn identity(&self) -> u64 {
+        self.a as u64 * 12345 + self.b as u64 // TODO: hash
     }
 }
 
@@ -45,11 +69,9 @@ impl ToLazy for Add {
 impl LazyWorker for Add {
     type Output = i32;
 
-    async fn run(self, _cache: Arc<Cache>) -> Result<Self::Output> {
-        let a = self.a.eval().await?;
-        let b = self.b.eval().await?;
-        println!("running Add({}, {})", *a, *b);
-        Ok(*a + *b)
+    async fn run(self, _: Arc<Cache>) -> Result<Self::Output> {
+        println!("running Add({}, {})", self.a, self.b);
+        Ok(self.a + self.b)
     }
 }
 
@@ -58,12 +80,17 @@ fn try_main() -> Result<()> {
 
     let a = 1i32.lazy(&cache);
     let b = 2i32.lazy(&cache);
-    let c = Add { a, b }.lazy(&cache);
+    let c = AddLazy { a, b }.lazy(&cache);
+
+    let d1 = Add { a: 5, b: 7 }.lazy(&cache);
+    let d2 = Add { a: 5, b: 7 }.lazy(&cache);
 
     let mut runtime = Runtime::new()?;
 
     dbg!(*runtime.block_on(c.eval())?);
     dbg!(*runtime.block_on(c.eval())?);
+    dbg!(*runtime.block_on(d1.eval())?);
+    dbg!(*runtime.block_on(d2.eval())?);
 
     Ok(())
 }
