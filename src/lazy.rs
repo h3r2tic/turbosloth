@@ -10,6 +10,8 @@ use std::{
     sync::{Arc, Mutex, RwLock},
 };
 
+pub use turbosloth_macros::IntoLazy;
+
 pub trait LazyReqs: Any + Sized + Send + Sync + 'static {}
 impl<T: Any + Sized + Send + Sync + 'static> LazyReqs for T {}
 

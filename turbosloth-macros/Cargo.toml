@@ -1,0 +1,16 @@
+[package]
+name = "turbosloth-macros"
+version = "0.1.0"
+authors = ["Tomasz Stachowiak <h3@h3.gd>"]
+edition = "2018"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1.0"
+syn = { version = "1.0.35", features = [
+    "full",
+    "extra-traits"  # Debug
+] }
