@@ -98,7 +98,8 @@ impl<T: LazyReqs> Clone for LazyInner<T> {
 
 pub struct Lazy<T: LazyReqs> {
     inner: Mutex<LazyInner<T>>,
-    pub identity: u64,
+    identity: u64,
+    pub debug_name: &'static str,
 }
 
 impl<T: LazyReqs> Clone for Lazy<T> {
@@ -106,6 +107,7 @@ impl<T: LazyReqs> Clone for Lazy<T> {
         Self {
             inner: Mutex::new(self.inner.lock().unwrap().clone()),
             identity: self.identity,
+            debug_name: self.debug_name,
         }
     }
 }
@@ -155,6 +157,8 @@ impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
             let build_result = payload.build_result.clone();
             let cache = cache.clone();
 
+            log::info!("Evaluating {}", self.debug_name);
+
             Box::pin(async move {
                 let worker = worker.run_boxed(cache);
                 let res: T = tokio::task::spawn(worker).await??;
@@ -198,6 +202,7 @@ where
         Lazy {
             identity,
             inner: Mutex::new(LazyInner::Isolated(Arc::new(self))),
+            debug_name: std::any::type_name::<Self>(),
         }
     }
 }

@@ -22,7 +22,6 @@ impl LazyWorker for Add {
     type Output = i32;
 
     async fn run(self, _: Arc<Cache>) -> Result<Self::Output> {
-        println!("running Add({}, {})", self.a, self.b);
         Ok(self.a + self.b)
     }
 }
@@ -39,11 +38,30 @@ fn try_main() -> Result<()> {
     dbg!(*runtime.block_on(add2.eval(&cache))?);
     dbg!(*runtime.block_on(add3.eval(&cache))?);
     dbg!(*runtime.block_on(Add { a: 5, b: 7 }.into_lazy().eval(&cache))?);
+    dbg!(*runtime.block_on(Add { a: 5, b: 8 }.into_lazy().eval(&cache))?);
 
     Ok(())
 }
 
 fn main() {
+    use chrono::Local;
+    use env_logger::Builder;
+    use log::LevelFilter;
+    use std::io::Write;
+
+    let mut builder = Builder::new();
+    builder.format(|buf, record| {
+        writeln!(
+            buf,
+            "{} [{}] - {}",
+            Local::now().format("%H:%M:%S"),
+            record.level(),
+            record.args()
+        )
+    });
+    Builder::filter(&mut builder, None, LevelFilter::Trace);
+    builder.init();
+
     if let Err(err) = try_main() {
         eprintln!("ERROR: {:?}", err);
         err.chain()
