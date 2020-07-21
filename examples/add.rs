@@ -17,7 +17,7 @@ impl LazyWorker for Add {
     }
 }
 
-fn try_main() -> Result<()> {
+fn main() -> Result<()> {
     let add1 = Add { a: 5, b: 7 }.into_lazy();
     let add2 = Add { a: 5, b: 7 }.into_lazy();
     let add3 = add2.clone();
@@ -32,32 +32,4 @@ fn try_main() -> Result<()> {
     dbg!(*runtime.block_on(Add { a: 5, b: 8 }.into_lazy().eval(&cache))?);
 
     Ok(())
-}
-
-fn main() {
-    use chrono::Local;
-    use env_logger::Builder;
-    use log::LevelFilter;
-    use std::io::Write;
-
-    let mut builder = Builder::new();
-    builder.format(|buf, record| {
-        writeln!(
-            buf,
-            "{} [{}] - {}",
-            Local::now().format("%H:%M:%S"),
-            record.level(),
-            record.args()
-        )
-    });
-    Builder::filter(&mut builder, None, LevelFilter::Trace);
-    builder.init();
-
-    if let Err(err) = try_main() {
-        eprintln!("ERROR: {:?}", err);
-        err.chain()
-            .skip(1)
-            .for_each(|cause| eprintln!("because: {}", cause));
-        std::process::exit(1);
-    }
 }
