@@ -14,12 +14,6 @@ mod lazy;
 use cache::*;
 use lazy::*;
 
-impl ToLazy for i32 {
-    fn identity(&self) -> u64 {
-        *self as u64 // TODO: hash
-    }
-}
-
 #[async_trait]
 impl LazyWorker for i32 {
     type Output = i32;
@@ -28,17 +22,12 @@ impl LazyWorker for i32 {
         Ok(self)
     }
 }
+impl IntoLazy for i32 {}
 
-#[derive(Clone)]
+#[derive(Clone, Hash)]
 struct AddLazy {
     a: Lazy<i32>,
     b: Lazy<i32>,
-}
-
-impl ToLazy for AddLazy {
-    fn identity(&self) -> u64 {
-        self.a.identity * 12345 + self.b.identity // TODO: hash
-    }
 }
 
 #[async_trait]
@@ -52,17 +41,12 @@ impl LazyWorker for AddLazy {
         Ok(*a + *b)
     }
 }
+impl IntoLazy for AddLazy {}
 
-#[derive(Clone)]
+#[derive(Clone, Hash)]
 struct Add {
     a: i32,
     b: i32,
-}
-
-impl ToLazy for Add {
-    fn identity(&self) -> u64 {
-        self.a as u64 * 12345 + self.b as u64 // TODO: hash
-    }
 }
 
 #[async_trait]
@@ -74,14 +58,16 @@ impl LazyWorker for Add {
         Ok(self.a + self.b)
     }
 }
+impl IntoLazy for Add {}
 
 fn try_main() -> Result<()> {
-    let a = 1i32.lazy();
-    let b = 2i32.lazy();
-    let c = AddLazy { a, b }.lazy();
+    let a = 1i32.into_lazy();
+    let b = 2i32.into_lazy();
+    let c = AddLazy { a, b }.into_lazy();
 
-    let d1 = Add { a: 5, b: 7 }.lazy();
-    let d2 = Add { a: 5, b: 7 }.lazy();
+    let d1 = Add { a: 5, b: 7 }.into_lazy();
+    let d2 = Add { a: 5, b: 7 }.into_lazy();
+    let d3 = d2.clone();
 
     let cache = Cache::create();
     let mut runtime = Runtime::new()?;
@@ -90,6 +76,9 @@ fn try_main() -> Result<()> {
     dbg!(*runtime.block_on(c.eval(&cache))?);
     dbg!(*runtime.block_on(d1.eval(&cache))?);
     dbg!(*runtime.block_on(d2.eval(&cache))?);
+    dbg!(*runtime.block_on(d3.eval(&cache))?);
+
+    dbg!(*runtime.block_on(Add { a: 5, b: 7 }.into_lazy().eval(&cache))?);
 
     Ok(())
 }

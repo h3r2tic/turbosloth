@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use std::{
     any::Any,
     future::Future,
+    hash::{Hash, Hasher},
     pin::Pin,
     sync::{Arc, Mutex, RwLock},
 };
@@ -107,6 +108,12 @@ impl<T: LazyReqs> Clone for Lazy<T> {
     }
 }
 
+impl<T: LazyReqs> Hash for Lazy<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.identity.hash(state);
+    }
+}
+
 pub trait EvalLazy<T: LazyReqs> {
     fn eval(
         &self,
@@ -167,11 +174,23 @@ impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
     }
 }
 
-pub trait ToLazy
+pub trait ToLazyIdentity {
+    fn identity(&self) -> u64;
+}
+
+impl<T: Hash> ToLazyIdentity for T {
+    fn identity(&self) -> u64 {
+        let mut s = twox_hash::XxHash64::default();
+        <Self as std::hash::Hash>::hash(&self, &mut s);
+        s.finish()
+    }
+}
+
+pub trait IntoLazy: ToLazyIdentity
 where
     Self: LazyWorker + Sized + Clone,
 {
-    fn lazy(self) -> Lazy<<Self as LazyWorker>::Output> {
+    fn into_lazy(self) -> Lazy<<Self as LazyWorker>::Output> {
         let identity = self.identity();
 
         Lazy {
@@ -179,6 +198,4 @@ where
             inner: Mutex::new(LazyInner::Isolated(Arc::new(self))),
         }
     }
-
-    fn identity(&self) -> u64;
 }
