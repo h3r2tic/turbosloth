@@ -1,5 +1,3 @@
-#![allow(unused_imports)]
-
 use crate::lazy::{LazyPayload, LazyReqs};
 use std::{
     any::{Any, TypeId},

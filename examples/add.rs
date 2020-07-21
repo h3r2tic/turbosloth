@@ -1,15 +1,5 @@
-#[allow(unused_imports)]
-use anyhow::{anyhow, Result};
-
-use async_trait::async_trait;
-use std::sync::Arc;
 use tokio::runtime::Runtime;
-
-mod cache;
-mod lazy;
-
-use cache::*;
-use lazy::*;
+use turbosloth::*;
 
 #[derive(Clone, Hash, IntoLazy)]
 struct Add {
@@ -21,7 +11,8 @@ struct Add {
 impl LazyWorker for Add {
     type Output = i32;
 
-    async fn run(self, _: Arc<Cache>) -> Result<Self::Output> {
+    async fn run(self, _: LazyContext) -> Result<Self::Output> {
+        dbg!(self.identity());
         Ok(self.a + self.b)
     }
 }
