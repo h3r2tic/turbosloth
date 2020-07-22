@@ -169,7 +169,7 @@ impl Clone for LazyInner {
 }
 
 pub struct Lazy<T: LazyReqs> {
-    inner: Mutex<LazyInner>,
+    inner: RwLock<LazyInner>,
     identity: u64,
     pub debug_name: &'static str,
     marker: PhantomData<T>,
@@ -178,7 +178,7 @@ pub struct Lazy<T: LazyReqs> {
 impl<T: LazyReqs> Clone for Lazy<T> {
     fn clone(&self) -> Self {
         Self {
-            inner: Mutex::new(self.inner.lock().unwrap().clone()),
+            inner: RwLock::new(self.inner.read().unwrap().clone()),
             identity: self.identity,
             debug_name: self.debug_name,
             marker: PhantomData,
@@ -283,11 +283,19 @@ impl ToRunContext for Arc<Cache> {
 }
 
 impl<T: LazyReqs> Lazy<T> {
+    pub fn is_up_to_date(&self) -> bool {
+        let inner = self.inner.read().unwrap();
+        match &*inner {
+            LazyInner::Cached(payload) => !payload.rebuild_pending.load(Ordering::Relaxed),
+            LazyInner::Isolated(..) => false,
+        }
+    }
+
     pub fn eval(&self, ctx: &impl ToRunContext) -> impl Future<Output = Result<Arc<T>>> {
         let ctx: RunContext = ctx.to_run_context();
 
         let payload = {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.write().unwrap();
 
             match &mut *inner {
                 LazyInner::Cached(cached) => cached.clone(),
@@ -420,7 +428,7 @@ where
 
         Lazy {
             identity,
-            inner: Mutex::new(LazyInner::Isolated(Arc::new(self))),
+            inner: RwLock::new(LazyInner::Isolated(Arc::new(self))),
             debug_name: std::any::type_name::<Self>(),
             marker: PhantomData,
         }
