@@ -1,4 +1,4 @@
-use crate::lazy::{LazyPayload, LazyReqs};
+use crate::lazy::LazyPayload;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, RwLock, Weak},
 };
 
-pub(crate) trait TypedCacheObj: Send + Sync {
+pub(crate) trait SingleTypeCacheObj: Send + Sync {
     fn get_or_insert_with(
         &self,
         identity: u64,
@@ -14,11 +14,11 @@ pub(crate) trait TypedCacheObj: Send + Sync {
     ) -> Arc<dyn Any + Send + Sync + 'static>;
 }
 
-pub(crate) struct TypedCache<T: LazyReqs> {
-    pub(crate) values: RwLock<HashMap<u64, Weak<LazyPayload<T>>>>,
+pub(crate) struct SingleTypeCache {
+    pub(crate) values: RwLock<HashMap<u64, Weak<LazyPayload>>>,
 }
 
-impl<T: LazyReqs> TypedCache<T> {
+impl SingleTypeCache {
     fn new() -> Self {
         Self {
             values: Default::default(),
@@ -26,7 +26,7 @@ impl<T: LazyReqs> TypedCache<T> {
     }
 }
 
-impl<T: LazyReqs> TypedCacheObj for TypedCache<T> {
+impl SingleTypeCacheObj for SingleTypeCache {
     fn get_or_insert_with<'a, 'b>(
         &self,
         identity: u64,
@@ -48,14 +48,14 @@ impl<T: LazyReqs> TypedCacheObj for TypedCache<T> {
                     existing
                 } else {
                     // Entry exists, but the weak pointer is dead. Re-create.
-                    let res = Arc::downcast::<LazyPayload<T>>((create_fn)()).unwrap();
+                    let res = Arc::downcast::<LazyPayload>((create_fn)()).unwrap();
                     *existing.get_mut() = Arc::downgrade(&res);
                     res
                 }
             }
             std::collections::hash_map::Entry::Vacant(vacant) => {
                 // Entry does not exist
-                let res = Arc::downcast::<LazyPayload<T>>((create_fn)()).unwrap();
+                let res = Arc::downcast::<LazyPayload>((create_fn)()).unwrap();
                 vacant.insert(Arc::downgrade(&res));
                 res
             }
@@ -64,7 +64,7 @@ impl<T: LazyReqs> TypedCacheObj for TypedCache<T> {
 }
 
 pub struct Cache {
-    pub(crate) typed_caches: RwLock<HashMap<TypeId, Arc<dyn TypedCacheObj>>>,
+    pub(crate) typed_caches: RwLock<HashMap<TypeId, Arc<dyn SingleTypeCacheObj>>>,
 }
 
 impl Cache {
@@ -74,13 +74,12 @@ impl Cache {
         })
     }
 
-    pub(crate) fn get_or_insert_with<T: LazyReqs>(
+    pub(crate) fn get_or_insert_with(
         &self,
+        type_id: TypeId,
         identity: u64,
-        create_fn: impl (FnOnce() -> LazyPayload<T>) + 'static,
-    ) -> Arc<LazyPayload<T>> {
-        let type_id = TypeId::of::<T>();
-
+        create_fn: impl (FnOnce() -> LazyPayload) + 'static,
+    ) -> Arc<LazyPayload> {
         let typed_cache_obj = {
             let typed_caches = self.typed_caches.read().unwrap();
             if !typed_caches.contains_key(&type_id) {
@@ -88,7 +87,7 @@ impl Cache {
                 let mut typed_caches = self.typed_caches.write().unwrap();
                 typed_caches
                     .entry(type_id)
-                    .or_insert_with(|| Arc::new(TypedCache::<T>::new()))
+                    .or_insert_with(|| Arc::new(SingleTypeCache::new()))
                     .clone()
             } else {
                 typed_caches.get(&type_id).unwrap().clone()

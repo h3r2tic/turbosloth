@@ -3,9 +3,10 @@ use crate::cache::*;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::{
-    any::Any,
+    any::{Any, TypeId},
     future::Future,
     hash::{Hash, Hasher},
+    marker::PhantomData,
     pin::Pin,
     sync::{Arc, Mutex, RwLock},
 };
@@ -22,40 +23,41 @@ pub trait LazyWorker: Send + Sync + 'static {
     async fn run(self, cache: Arc<Cache>) -> Result<Self::Output>;
 }
 
-pub trait LazyWorkerEx<T: LazyReqs> {
-    fn clone_boxed(&self) -> Box<dyn LazyWorkerObj<T>>;
-
+pub trait LazyWorkerObj: Send + Sync {
+    fn clone_boxed(&self) -> Box<dyn LazyWorkerObj>;
     fn run_boxed(
         self: Box<Self>,
         cache: Arc<Cache>,
-    ) -> Pin<Box<dyn Future<Output = Result<T>> + Send + 'static>>;
+    ) -> Pin<Box<dyn Future<Output = Result<Arc<dyn Any + Send + Sync>>> + Send + 'static>>;
 }
 
-impl<T: LazyReqs, W> LazyWorkerEx<T> for W
+impl<T: LazyReqs, W> LazyWorkerObj for W
 where
-    W: LazyWorker<Output = T> + Clone + Sized,
+    W: LazyWorker<Output = T> + Clone,
 {
-    fn clone_boxed(&self) -> Box<dyn LazyWorkerObj<T>> {
+    fn clone_boxed(&self) -> Box<dyn LazyWorkerObj> {
         Box::new((*self).clone())
     }
 
     fn run_boxed(
         self: Box<Self>,
         cache: Arc<Cache>,
-    ) -> Pin<Box<dyn Future<Output = Result<T>> + Send + 'static>> {
-        (*self).run(cache)
+    ) -> Pin<Box<dyn Future<Output = Result<Arc<dyn Any + Send + Sync>>> + Send + 'static>> {
+        Box::pin(async {
+            (*self)
+                .run(cache)
+                .await
+                .map(|result| -> Arc<dyn Any + Send + Sync> { Arc::new(result) })
+        })
     }
 }
 
-pub trait LazyWorkerObj<T: LazyReqs>: LazyWorker<Output = T> + LazyWorkerEx<T> {}
-impl<T: LazyReqs, W> LazyWorkerObj<T> for W where W: LazyWorker<Output = T> + LazyWorkerEx<T> {}
-
-pub struct LazyPayload<T: LazyReqs> {
-    pub worker: Box<dyn LazyWorkerObj<T>>,
-    pub build_record: RwLock<BuildRecord<T>>,
+pub struct LazyPayload {
+    pub worker: Box<dyn LazyWorkerObj>,
+    pub build_record: RwLock<BuildRecord>,
 }
 
-impl<T: LazyReqs> Clone for LazyPayload<T> {
+impl Clone for LazyPayload {
     fn clone(&self) -> Self {
         Self {
             worker: self.worker.clone_boxed(),
@@ -64,11 +66,11 @@ impl<T: LazyReqs> Clone for LazyPayload<T> {
     }
 }
 
-pub struct BuildRecord<T: LazyReqs> {
-    artifact: Option<Arc<T>>,
+pub struct BuildRecord {
+    artifact: Option<Arc<dyn Any + Send + Sync>>,
 }
 
-impl<T: LazyReqs> Default for BuildRecord<T> {
+impl Default for BuildRecord {
     fn default() -> Self {
         Self {
             artifact: Default::default(),
@@ -76,12 +78,12 @@ impl<T: LazyReqs> Default for BuildRecord<T> {
     }
 }
 
-enum LazyInner<T: LazyReqs> {
-    Cached(Arc<LazyPayload<T>>),
-    Isolated(Arc<dyn LazyWorkerObj<T>>),
+enum LazyInner {
+    Cached(Arc<LazyPayload>),
+    Isolated(Arc<dyn LazyWorkerObj>),
 }
 
-impl<T: LazyReqs> Clone for LazyInner<T> {
+impl Clone for LazyInner {
     fn clone(&self) -> Self {
         match self {
             Self::Cached(cached) => Self::Cached(cached.clone()),
@@ -91,9 +93,10 @@ impl<T: LazyReqs> Clone for LazyInner<T> {
 }
 
 pub struct Lazy<T: LazyReqs> {
-    inner: Mutex<LazyInner<T>>,
+    inner: Mutex<LazyInner>,
     identity: u64,
     pub debug_name: &'static str,
+    marker: PhantomData<T>,
 }
 
 impl<T: LazyReqs> Clone for Lazy<T> {
@@ -102,6 +105,7 @@ impl<T: LazyReqs> Clone for Lazy<T> {
             inner: Mutex::new(self.inner.lock().unwrap().clone()),
             identity: self.identity,
             debug_name: self.debug_name,
+            marker: PhantomData,
         }
     }
 }
@@ -131,10 +135,12 @@ impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
                 LazyInner::Cached(cached) => cached.clone(),
                 LazyInner::Isolated(isolated) => {
                     let worker = isolated.clone_boxed();
-                    let cached = cache.get_or_insert_with(self.identity, move || LazyPayload {
-                        worker,
-                        build_record: Default::default(),
-                    });
+                    let type_id = TypeId::of::<T>();
+                    let cached =
+                        cache.get_or_insert_with(type_id, self.identity, move || LazyPayload {
+                            worker,
+                            build_record: Default::default(),
+                        });
 
                     let result = cached.clone();
 
@@ -154,12 +160,16 @@ impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
 
             Box::pin(async move {
                 let worker = worker.run_boxed(cache);
-                let res: T = tokio::task::spawn(worker).await??;
+                let res: Arc<dyn Any + Send + Sync> = tokio::task::spawn(worker).await??;
 
                 let mut build_record = payload.build_record.write().unwrap();
-                build_record.artifact = Some(Arc::new(res));
+                build_record.artifact = Some(res);
 
-                let v: Option<Arc<T>> = build_record.artifact.clone();
+                let v: Option<Arc<T>> = build_record
+                    .artifact
+                    .clone()
+                    .map(|artifact| Arc::downcast::<T>(artifact).expect("downcast"));
+
                 if let Some(v) = v {
                     Ok(v)
                 } else {
@@ -167,9 +177,12 @@ impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
                 }
             })
         } else {
-            let v: Arc<T> =
-                Option::<&Arc<_>>::cloned(payload.build_record.read().unwrap().artifact.as_ref())
-                    .expect("a valid build result");
+            let build_record = payload.build_record.read().unwrap();
+            let v: Option<Arc<T>> = build_record
+                .artifact
+                .clone()
+                .map(|artifact| Arc::downcast::<T>(artifact).expect("downcast"));
+            let v: Arc<T> = v.expect("a valid build result");
             Box::pin(async move { Ok(v) })
         }
     }
@@ -198,6 +211,7 @@ where
             identity,
             inner: Mutex::new(LazyInner::Isolated(Arc::new(self))),
             debug_name: std::any::type_name::<Self>(),
+            marker: PhantomData,
         }
     }
 }
