@@ -1,22 +1,37 @@
 use tokio::runtime::Runtime;
 use turbosloth::*;
 
-static mut REFROB: Option<Box<dyn Fn() + Send + Sync>> = None;
+static mut REFORBLE: Option<Box<dyn Fn() + Send + Sync>> = None;
 
 #[derive(Clone, Hash, IntoLazy)]
-struct Frobnicate;
+struct Forble;
 
 #[async_trait]
-impl LazyWorker for Frobnicate {
+impl LazyWorker for Forble {
     type Output = String;
 
     async fn run(self, ctx: RunContext) -> Result<Self::Output> {
         unsafe {
-            REFROB = Some(Box::new(ctx.get_invalidation_trigger()));
+            REFORBLE = Some(Box::new(ctx.get_invalidation_trigger()));
         }
 
-        println!("Frobnicating");
-        Ok("frob".to_owned())
+        println!("Forbling");
+        Ok("forble".to_owned())
+    }
+}
+
+#[derive(Clone, Hash, IntoLazy)]
+struct Borble {
+    forble: Lazy<String>,
+}
+
+#[async_trait]
+impl LazyWorker for Borble {
+    type Output = String;
+
+    async fn run(self, ctx: RunContext) -> Result<Self::Output> {
+        println!("Borbling the forble");
+        Ok((*self.forble.eval(ctx).await?).clone() + "borble")
     }
 }
 
@@ -24,16 +39,19 @@ fn main() -> Result<()> {
     let cache = Cache::create();
     let mut runtime = Runtime::new()?;
 
-    let a = Frobnicate.into_lazy();
-    dbg!(runtime.block_on(a.eval(&cache))?);
-    dbg!(runtime.block_on(a.eval(&cache))?);
+    let boop = Borble {
+        forble: Forble.into_lazy(),
+    }
+    .into_lazy();
+    dbg!(runtime.block_on(boop.eval(&cache))?);
+    dbg!(runtime.block_on(boop.eval(&cache))?);
 
-    println!("Invalidating the worker result.");
+    println!("Invalidating the forble!");
     unsafe {
-        (REFROB.as_ref().unwrap())();
+        (REFORBLE.as_ref().unwrap())();
     }
 
-    dbg!(runtime.block_on(a.eval(&cache))?);
+    dbg!(runtime.block_on(boop.eval(&cache))?);
 
     Ok(())
 }
