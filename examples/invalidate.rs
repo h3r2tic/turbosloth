@@ -25,13 +25,20 @@ struct Borble {
     forble: Lazy<String>,
 }
 
+/*macro_rules! await_lazy {
+    ($ctx:expr, $val:expr) => {
+        $val.eval($ctx).await?
+    };
+}*/
+
 #[async_trait]
 impl LazyWorker for Borble {
     type Output = String;
 
     async fn run(self, ctx: RunContext) -> Result<Self::Output> {
+        let forble = self.forble.eval(&ctx).await?;
         println!("Borbling the forble");
-        Ok((*self.forble.eval(ctx).await?).clone() + "borble")
+        Ok((*forble).clone() + "borble")
     }
 }
 

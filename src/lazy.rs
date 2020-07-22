@@ -253,11 +253,37 @@ impl From<&Arc<Cache>> for RunContext {
     }
 }
 
-type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+/*impl From<&RunContext> for RunContext {
+    fn from(ctx: &RunContext) -> Self {
+        RunContext {
+            cache: ctx.cache.clone(),
+            tracker: ctx.tracker.clone(),
+        }
+    }
+}*/
+
+pub trait ToRunContext {
+    fn to_run_context(&self) -> RunContext;
+}
+
+impl ToRunContext for RunContext {
+    fn to_run_context(&self) -> RunContext {
+        self.clone()
+    }
+}
+
+impl ToRunContext for Arc<Cache> {
+    fn to_run_context(&self) -> RunContext {
+        RunContext {
+            cache: self.clone(),
+            tracker: None,
+        }
+    }
+}
 
 impl<T: LazyReqs> Lazy<T> {
-    pub fn eval(&self, context: impl Into<RunContext>) -> BoxedFuture<Result<Arc<T>>> {
-        let context = context.into();
+    pub fn eval(&self, context: &impl ToRunContext) -> impl Future<Output = Result<Arc<T>>> {
+        let context: RunContext = context.to_run_context();
 
         let payload = {
             let mut inner = self.inner.lock().unwrap();
@@ -286,17 +312,18 @@ impl<T: LazyReqs> Lazy<T> {
         };
 
         context.register_dependency(&payload);
+        let debug_name = self.debug_name;
 
-        if payload.rebuild_pending.load(Ordering::Relaxed) {
-            let worker = payload.worker.clone_boxed();
-            let context = RunContext {
-                cache: context.cache,
-                tracker: Some(Arc::new(EvalTracker::new(payload.clone()))),
-            };
+        async move {
+            if payload.rebuild_pending.load(Ordering::Relaxed) {
+                let worker = payload.worker.clone_boxed();
+                let context = RunContext {
+                    cache: context.cache,
+                    tracker: Some(Arc::new(EvalTracker::new(payload.clone()))),
+                };
 
-            log::info!("Evaluating {}", self.debug_name);
+                log::info!("Evaluating {}", debug_name);
 
-            Box::pin(async move {
                 // Clear rebuild pending status before running the worker.
                 // If the asset becomes invalidated while the worker is running,
                 // it will need to be evaluated again next time.
@@ -359,15 +386,15 @@ impl<T: LazyReqs> Lazy<T> {
                 } else {
                     Err(anyhow!("The requested asset failed to build"))
                 }
-            })
-        } else {
-            let build_record = payload.build_record.read().unwrap();
-            let v: Option<Arc<T>> = build_record
-                .artifact
-                .clone()
-                .map(|artifact| Arc::downcast::<T>(artifact).expect("downcast"));
-            let v: Arc<T> = v.expect("a valid build result");
-            Box::pin(async move { Ok(v) })
+            } else {
+                let build_record = payload.build_record.read().unwrap();
+                let v: Option<Arc<T>> = build_record
+                    .artifact
+                    .clone()
+                    .map(|artifact| Arc::downcast::<T>(artifact).expect("downcast"));
+                let v: Arc<T> = v.expect("a valid build result");
+                Ok(v)
+            }
         }
     }
 }

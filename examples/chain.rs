@@ -17,11 +17,11 @@ impl LazyWorker for Op1 {
 #[derive(Clone, Hash, IntoLazy)]
 struct Op2(Lazy<i32>);
 
-macro_rules! eval {
+/*macro_rules! await_lazy {
     ($ctx:expr, $val:expr) => {
-        *$val.eval($ctx).await?
+        $val.eval($ctx).await?
     };
-}
+}*/
 
 #[async_trait]
 impl LazyWorker for Op2 {
@@ -29,8 +29,8 @@ impl LazyWorker for Op2 {
 
     async fn run(self, ctx: RunContext) -> Result<Self::Output> {
         println!("Running Op2");
-        //Ok(*self.0.eval(ctx).await? + 7)
-        Ok(eval!(ctx, self.0) + 7)
+        Ok(*self.0.eval(&ctx).await? + 7)
+        //Ok(*await_lazy!(&ctx, self.0) + 7)
     }
 }
 
