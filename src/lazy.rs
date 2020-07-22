@@ -226,8 +226,9 @@ impl RunContext {
 impl RunContext {
     fn register_dependency(&self, dep: &Arc<LazyPayload>) {
         if let Some(tracker) = self.tracker.as_ref() {
-            println!(
-                "    Registering a dependency on {}",
+            log::info!(
+                "{}: Registering a dependency on {}",
+                tracker.current_ref.worker.debug_name(),
                 dep.worker.debug_name()
             );
             tracker.dependencies.lock().unwrap().insert(dep.clone());
