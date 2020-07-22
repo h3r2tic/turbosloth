@@ -6,8 +6,6 @@ pub use async_trait::async_trait;
 pub use cache::*;
 pub use lazy::*;
 
-pub type LazyContext = std::sync::Arc<Cache>;
-
 /*
 fn main() {
     use chrono::Local;

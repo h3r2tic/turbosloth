@@ -4,11 +4,12 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::{
     any::{Any, TypeId},
+    collections::HashSet,
     future::Future,
     hash::{Hash, Hasher},
     marker::PhantomData,
     pin::Pin,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, Mutex, RwLock, Weak},
 };
 
 pub use turbosloth_macros::IntoLazy;
@@ -20,32 +21,42 @@ impl<T: Any + Sized + Send + Sync + 'static> LazyReqs for T {}
 pub trait LazyWorker: Send + Sync + 'static {
     type Output: LazyReqs;
 
-    async fn run(self, cache: Arc<Cache>) -> Result<Self::Output>;
+    async fn run(self, context: RunContext) -> Result<Self::Output>;
 }
 
 type BoxedWorkerFuture =
     Pin<Box<dyn Future<Output = Result<Arc<dyn Any + Send + Sync>>> + Send + 'static>>;
 
 pub trait LazyWorkerObj: Send + Sync {
+    fn identity(&self) -> u64;
     fn clone_boxed(&self) -> Box<dyn LazyWorkerObj>;
-    fn run_boxed(self: Box<Self>, cache: Arc<Cache>) -> BoxedWorkerFuture;
+    fn run_boxed(self: Box<Self>, context: RunContext) -> BoxedWorkerFuture;
+    fn debug_name(&self) -> &'static str;
 }
 
 impl<T: LazyReqs, W> LazyWorkerObj for W
 where
-    W: LazyWorker<Output = T> + Clone,
+    W: LazyWorker<Output = T> + Clone + Hash,
 {
+    fn identity(&self) -> u64 {
+        <Self as ToLazyIdentity>::identity(self)
+    }
+
     fn clone_boxed(&self) -> Box<dyn LazyWorkerObj> {
         Box::new((*self).clone())
     }
 
-    fn run_boxed(self: Box<Self>, cache: Arc<Cache>) -> BoxedWorkerFuture {
+    fn run_boxed(self: Box<Self>, context: RunContext) -> BoxedWorkerFuture {
         Box::pin(async {
             (*self)
-                .run(cache)
+                .run(context)
                 .await
                 .map(|result| -> Arc<dyn Any + Send + Sync> { Arc::new(result) })
         })
+    }
+
+    fn debug_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
     }
 }
 
@@ -53,6 +64,19 @@ pub struct LazyPayload {
     pub worker: Box<dyn LazyWorkerObj>,
     pub build_record: RwLock<BuildRecord>,
 }
+
+impl Hash for LazyPayload {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.worker.identity());
+    }
+}
+
+impl PartialEq for LazyPayload {
+    fn eq(&self, other: &Self) -> bool {
+        self.worker.identity() == other.worker.identity()
+    }
+}
+impl Eq for LazyPayload {}
 
 impl Clone for LazyPayload {
     fn clone(&self) -> Self {
@@ -63,16 +87,17 @@ impl Clone for LazyPayload {
     }
 }
 
+pub type BuildDependency = Arc<LazyPayload>;
+pub type ReverseBuildDependency = Weak<LazyPayload>;
+
+#[derive(Default)]
 pub struct BuildRecord {
     artifact: Option<Arc<dyn Any + Send + Sync>>,
-}
 
-impl Default for BuildRecord {
-    fn default() -> Self {
-        Self {
-            artifact: Default::default(),
-        }
-    }
+    // Assets this one requested during the last build
+    pub dependencies: HashSet<BuildDependency>,
+    // Assets that requested this asset during their builds
+    pub reverse_dependencies: Vec<ReverseBuildDependency>,
 }
 
 enum LazyInner {
@@ -113,18 +138,68 @@ impl<T: LazyReqs> Hash for Lazy<T> {
     }
 }
 
+pub(crate) struct EvalTracker {
+    pub dependencies: Mutex<HashSet<BuildDependency>>,
+}
+
+impl EvalTracker {
+    fn new() -> Self {
+        Self {
+            dependencies: Default::default(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct RunContext {
+    pub(crate) cache: Arc<Cache>,
+    pub(crate) tracker: Option<Arc<EvalTracker>>,
+}
+
+impl RunContext {
+    fn register_dependency(&self, dep: &Arc<LazyPayload>) {
+        if let Some(tracker) = self.tracker.as_ref() {
+            println!(
+                "    Registering a dependency on {}",
+                dep.worker.debug_name()
+            );
+            tracker.dependencies.lock().unwrap().insert(dep.clone());
+        }
+    }
+}
+
+impl From<Arc<Cache>> for RunContext {
+    fn from(cache: Arc<Cache>) -> Self {
+        RunContext {
+            cache,
+            tracker: None,
+        }
+    }
+}
+
+impl From<&Arc<Cache>> for RunContext {
+    fn from(cache: &Arc<Cache>) -> Self {
+        RunContext {
+            cache: cache.clone(),
+            tracker: None,
+        }
+    }
+}
+
 pub trait EvalLazy<T: LazyReqs> {
     fn eval(
         &self,
-        cache: &Arc<Cache>,
+        cache: impl Into<RunContext>,
     ) -> Pin<Box<dyn Future<Output = Result<Arc<T>>> + Send + 'static>>;
 }
 
 impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
     fn eval(
         &self,
-        cache: &Arc<Cache>,
+        context: impl Into<RunContext>,
     ) -> Pin<Box<dyn Future<Output = Result<Arc<T>>> + Send + 'static>> {
+        let context = context.into();
+
         let payload = {
             let mut inner = self.inner.lock().unwrap();
 
@@ -134,10 +209,12 @@ impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
                     let worker = isolated.clone_boxed();
                     let type_id = TypeId::of::<T>();
                     let cached =
-                        cache.get_or_insert_with(type_id, self.identity, move || LazyPayload {
-                            worker,
-                            build_record: Default::default(),
-                        });
+                        context
+                            .cache
+                            .get_or_insert_with(type_id, self.identity, move || LazyPayload {
+                                worker,
+                                build_record: Default::default(),
+                            });
 
                     let result = cached.clone();
 
@@ -148,15 +225,20 @@ impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
             }
         };
 
+        context.register_dependency(&payload);
+
         // HACK; TODO: check if build result doesn't exist or is stale
         if payload.build_record.read().unwrap().artifact.is_none() {
             let worker = payload.worker.clone_boxed();
-            let cache = cache.clone();
+            let context = RunContext {
+                cache: context.cache,
+                tracker: Some(Arc::new(EvalTracker::new())),
+            };
 
             log::info!("Evaluating {}", self.debug_name);
 
             Box::pin(async move {
-                let worker = worker.run_boxed(cache);
+                let worker = worker.run_boxed(context);
                 let res: Arc<dyn Any + Send + Sync> = tokio::task::spawn(worker).await??;
 
                 let mut build_record = payload.build_record.write().unwrap();
@@ -199,7 +281,7 @@ impl<T: Hash> ToLazyIdentity for T {
 
 pub trait IntoLazy: ToLazyIdentity
 where
-    Self: LazyWorker + Sized + Clone,
+    Self: LazyWorker + Sized + Clone + Hash,
 {
     fn into_lazy(self) -> Lazy<<Self as LazyWorker>::Output> {
         let identity = self.identity();

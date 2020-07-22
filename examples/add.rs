@@ -11,7 +11,7 @@ struct Add {
 impl LazyWorker for Add {
     type Output = i32;
 
-    async fn run(self, _: LazyContext) -> Result<Self::Output> {
+    async fn run(self, _: RunContext) -> Result<Self::Output> {
         println!("Running Add({}, {})", self.a, self.b);
         Ok(self.a + self.b)
     }
