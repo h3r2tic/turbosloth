@@ -24,7 +24,7 @@ impl<T: Any + Sized + Send + Sync + 'static> LazyReqs for T {}
 pub trait LazyWorker: Send + Sync + 'static {
     type Output: LazyReqs;
 
-    async fn run(self, context: RunContext) -> Result<Self::Output>;
+    async fn run(self, ctx: RunContext) -> Result<Self::Output>;
 }
 
 type BoxedWorkerFuture =
@@ -226,7 +226,7 @@ impl RunContext {
 impl RunContext {
     fn register_dependency(&self, dep: &Arc<LazyPayload>) {
         if let Some(tracker) = self.tracker.as_ref() {
-            log::info!(
+            tracing::info!(
                 "{}: Registering a dependency on {}",
                 tracker.current_ref.worker.debug_name(),
                 dep.worker.debug_name()
@@ -330,7 +330,7 @@ impl<T: LazyReqs> Lazy<T> {
                     tracker: Some(Arc::new(EvalTracker::new(payload.clone()))),
                 };
 
-                log::info!("Evaluating {}", debug_name);
+                tracing::info!("Evaluating {}", debug_name);
 
                 // Clear rebuild pending status before running the worker.
                 // If the asset becomes invalidated while the worker is running,
