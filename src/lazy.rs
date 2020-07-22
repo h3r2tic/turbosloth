@@ -23,12 +23,12 @@ pub trait LazyWorker: Send + Sync + 'static {
     async fn run(self, cache: Arc<Cache>) -> Result<Self::Output>;
 }
 
+type BoxedWorkerFuture =
+    Pin<Box<dyn Future<Output = Result<Arc<dyn Any + Send + Sync>>> + Send + 'static>>;
+
 pub trait LazyWorkerObj: Send + Sync {
     fn clone_boxed(&self) -> Box<dyn LazyWorkerObj>;
-    fn run_boxed(
-        self: Box<Self>,
-        cache: Arc<Cache>,
-    ) -> Pin<Box<dyn Future<Output = Result<Arc<dyn Any + Send + Sync>>> + Send + 'static>>;
+    fn run_boxed(self: Box<Self>, cache: Arc<Cache>) -> BoxedWorkerFuture;
 }
 
 impl<T: LazyReqs, W> LazyWorkerObj for W
@@ -39,10 +39,7 @@ where
         Box::new((*self).clone())
     }
 
-    fn run_boxed(
-        self: Box<Self>,
-        cache: Arc<Cache>,
-    ) -> Pin<Box<dyn Future<Output = Result<Arc<dyn Any + Send + Sync>>> + Send + 'static>> {
+    fn run_boxed(self: Box<Self>, cache: Arc<Cache>) -> BoxedWorkerFuture {
         Box::pin(async {
             (*self)
                 .run(cache)
