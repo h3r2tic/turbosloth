@@ -9,7 +9,10 @@ use std::{
     hash::{Hash, Hasher},
     marker::PhantomData,
     pin::Pin,
-    sync::{Arc, Mutex, RwLock, Weak},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, RwLock, Weak,
+    },
 };
 
 pub use turbosloth_macros::IntoLazy;
@@ -63,6 +66,25 @@ where
 pub struct LazyPayload {
     pub worker: Box<dyn LazyWorkerObj>,
     pub build_record: RwLock<BuildRecord>,
+    pub rebuild_pending: AtomicBool,
+}
+
+impl LazyPayload {
+    fn invalidate(&self) {
+        self.rebuild_pending.store(true, Ordering::Relaxed);
+        let reverse_dependencies = self
+            .build_record
+            .read()
+            .unwrap()
+            .reverse_dependencies
+            .clone();
+
+        for rev in reverse_dependencies {
+            if let Some(rev) = rev.upgrade() {
+                rev.invalidate();
+            }
+        }
+    }
 }
 
 impl Hash for LazyPayload {
@@ -83,6 +105,7 @@ impl Clone for LazyPayload {
         Self {
             worker: self.worker.clone_boxed(),
             build_record: Default::default(),
+            rebuild_pending: AtomicBool::new(true),
         }
     }
 }
@@ -186,18 +209,21 @@ impl From<&Arc<Cache>> for RunContext {
     }
 }
 
-pub trait EvalLazy<T: LazyReqs> {
-    fn eval(
-        &self,
-        cache: impl Into<RunContext>,
-    ) -> Pin<Box<dyn Future<Output = Result<Arc<T>>> + Send + 'static>>;
-}
+type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
-impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
-    fn eval(
-        &self,
-        context: impl Into<RunContext>,
-    ) -> Pin<Box<dyn Future<Output = Result<Arc<T>>> + Send + 'static>> {
+impl<T: LazyReqs> Lazy<T> {
+    pub fn invalidate(&self) {
+        match &*self.inner.lock().unwrap() {
+            LazyInner::Cached(payload) => {
+                payload.invalidate();
+            }
+            LazyInner::Isolated(_) => {
+                // Nothing to do here. Isolated references are always invalid.
+            }
+        }
+    }
+
+    pub fn eval(&self, context: impl Into<RunContext>) -> BoxedFuture<Result<Arc<T>>> {
         let context = context.into();
 
         let payload = {
@@ -214,6 +240,7 @@ impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
                             .get_or_insert_with(type_id, self.identity, move || LazyPayload {
                                 worker,
                                 build_record: Default::default(),
+                                rebuild_pending: AtomicBool::new(true),
                             });
 
                     let result = cached.clone();
@@ -227,8 +254,7 @@ impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
 
         context.register_dependency(&payload);
 
-        // HACK; TODO: check if build result doesn't exist or is stale
-        if payload.build_record.read().unwrap().artifact.is_none() {
+        if payload.rebuild_pending.load(Ordering::Relaxed) {
             let worker = payload.worker.clone_boxed();
             let context = RunContext {
                 cache: context.cache,
@@ -238,7 +264,13 @@ impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
             log::info!("Evaluating {}", self.debug_name);
 
             Box::pin(async move {
+                // Clear rebuild pending status before running the worker.
+                // If the asset becomes invalidated while the worker is running,
+                // it will need to be evaluated again next time.
+
+                payload.rebuild_pending.store(false, Ordering::Relaxed);
                 let worker = worker.run_boxed(context);
+
                 let res: Arc<dyn Any + Send + Sync> = tokio::task::spawn(worker).await??;
 
                 let mut build_record = payload.build_record.write().unwrap();
