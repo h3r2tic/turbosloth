@@ -52,33 +52,27 @@ impl<T: LazyReqs, W> LazyWorkerObj<T> for W where W: LazyWorker<Output = T> + La
 
 pub struct LazyPayload<T: LazyReqs> {
     pub worker: Box<dyn LazyWorkerObj<T>>,
-    pub build_result: Arc<BuildResult<T>>,
+    pub build_record: RwLock<BuildRecord<T>>,
 }
 
 impl<T: LazyReqs> Clone for LazyPayload<T> {
     fn clone(&self) -> Self {
         Self {
             worker: self.worker.clone_boxed(),
-            build_result: Default::default(),
+            build_record: Default::default(),
         }
     }
 }
 
-pub struct BuildResult<T: LazyReqs> {
-    value: RwLock<Option<Arc<T>>>,
+pub struct BuildRecord<T: LazyReqs> {
+    artifact: Option<Arc<T>>,
 }
 
-impl<T: LazyReqs> Default for BuildResult<T> {
+impl<T: LazyReqs> Default for BuildRecord<T> {
     fn default() -> Self {
         Self {
-            value: Default::default(),
+            artifact: Default::default(),
         }
-    }
-}
-
-impl<T: LazyReqs> BuildResult<T> {
-    fn is_none(&self) -> bool {
-        self.value.read().unwrap().is_none()
     }
 }
 
@@ -139,7 +133,7 @@ impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
                     let worker = isolated.clone_boxed();
                     let cached = cache.get_or_insert_with(self.identity, move || LazyPayload {
                         worker,
-                        build_result: Default::default(),
+                        build_record: Default::default(),
                     });
 
                     let result = cached.clone();
@@ -152,9 +146,8 @@ impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
         };
 
         // HACK; TODO: check if build result doesn't exist or is stale
-        if payload.build_result.is_none() {
+        if payload.build_record.read().unwrap().artifact.is_none() {
             let worker = payload.worker.clone_boxed();
-            let build_result = payload.build_result.clone();
             let cache = cache.clone();
 
             log::info!("Evaluating {}", self.debug_name);
@@ -162,9 +155,11 @@ impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
             Box::pin(async move {
                 let worker = worker.run_boxed(cache);
                 let res: T = tokio::task::spawn(worker).await??;
-                *build_result.value.write().unwrap() = Some(Arc::new(res));
 
-                let v: Option<Arc<T>> = build_result.value.read().unwrap().clone();
+                let mut build_record = payload.build_record.write().unwrap();
+                build_record.artifact = Some(Arc::new(res));
+
+                let v: Option<Arc<T>> = build_record.artifact.clone();
                 if let Some(v) = v {
                     Ok(v)
                 } else {
@@ -173,7 +168,7 @@ impl<T: LazyReqs> EvalLazy<T> for Lazy<T> {
             })
         } else {
             let v: Arc<T> =
-                Option::<&Arc<_>>::cloned(payload.build_result.value.read().unwrap().as_ref())
+                Option::<&Arc<_>>::cloned(payload.build_record.read().unwrap().artifact.as_ref())
                     .expect("a valid build result");
             Box::pin(async move { Ok(v) })
         }
