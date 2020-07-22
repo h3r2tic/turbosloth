@@ -283,8 +283,8 @@ impl ToRunContext for Arc<Cache> {
 }
 
 impl<T: LazyReqs> Lazy<T> {
-    pub fn eval(&self, context: &impl ToRunContext) -> impl Future<Output = Result<Arc<T>>> {
-        let context: RunContext = context.to_run_context();
+    pub fn eval(&self, ctx: &impl ToRunContext) -> impl Future<Output = Result<Arc<T>>> {
+        let ctx: RunContext = ctx.to_run_context();
 
         let payload = {
             let mut inner = self.inner.lock().unwrap();
@@ -294,14 +294,13 @@ impl<T: LazyReqs> Lazy<T> {
                 LazyInner::Isolated(isolated) => {
                     let worker = isolated.clone_boxed();
                     let type_id = TypeId::of::<T>();
-                    let cached =
-                        context
-                            .cache
-                            .get_or_insert_with(type_id, self.identity, move || LazyPayload {
-                                worker,
-                                build_record: Default::default(),
-                                rebuild_pending: AtomicBool::new(true),
-                            });
+                    let cached = ctx
+                        .cache
+                        .get_or_insert_with(type_id, self.identity, move || LazyPayload {
+                            worker,
+                            build_record: Default::default(),
+                            rebuild_pending: AtomicBool::new(true),
+                        });
 
                     let result = cached.clone();
 
@@ -312,14 +311,14 @@ impl<T: LazyReqs> Lazy<T> {
             }
         };
 
-        context.register_dependency(&payload);
+        ctx.register_dependency(&payload);
         let debug_name = self.debug_name;
 
         async move {
             if payload.rebuild_pending.load(Ordering::Relaxed) {
                 let worker = payload.worker.clone_boxed();
                 let context = RunContext {
-                    cache: context.cache,
+                    cache: ctx.cache,
                     tracker: Some(Arc::new(EvalTracker::new(payload.clone()))),
                 };
 
