@@ -1,8 +1,12 @@
 [package]
 name = "turbosloth"
+description = "On-demand computation"
+repository = "https://github.com/h3r2tic/turbosloth"
 version = "0.1.0"
 authors = ["Tomasz Stachowiak <h3@h3.gd>"]
 edition = "2018"
+license = "MIT OR Apache-2.0"
+documentation = "https://docs.rs/turbosloth"
 rust = "1.46"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -10,8 +14,6 @@ rust = "1.46"
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
-chrono = "0.4"
-env_logger = "0.7"
 tokio = { version = "0.2", features = ["rt-core", "rt-threaded"] }
 tracing = "0.1"
 turbosloth-macros = { path = "turbosloth-macros" }
