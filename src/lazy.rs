@@ -43,13 +43,14 @@ impl<T: Any + Sized + Send + Sync + 'static> LazyReqs for T {}
 #[async_trait]
 pub trait LazyWorker: Send + Sync + 'static {
     type Output;
+
     async fn run(self, ctx: RunContext) -> Self::Output;
 }
 
 pub trait LazyWorkerImpl {
     type Value: Send + Sync + 'static;
     type Error: Into<Box<dyn Error + 'static + Sync + Send>>;
-    type Output;
+
     fn run(self, ctx: RunContext) -> BoxedWorkerFuture;
 }
 
@@ -60,7 +61,6 @@ where
 {
     type Value = T;
     type Error = E;
-    type Output = std::result::Result<T, E>;
 
     fn run(self, ctx: RunContext) -> BoxedWorkerFuture {
         Box::pin(async {
