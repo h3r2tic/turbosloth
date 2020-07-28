@@ -1,5 +1,5 @@
 use tokio::runtime::Runtime;
-use turbosloth::prelude::*;
+use turbosloth::*;
 
 static mut REFORBLE: Option<Box<dyn Fn() + Send + Sync>> = None;
 
@@ -9,8 +9,9 @@ struct Forble;
 #[async_trait]
 impl LazyWorker for Forble {
     type Output = String;
+    type Error = anyhow::Error;
 
-    async fn run(self, ctx: RunContext) -> turbosloth::Result<Self::Output> {
+    async fn run(self, ctx: RunContext) -> anyhow::Result<Self::Output> {
         unsafe {
             REFORBLE = Some(Box::new(ctx.get_invalidation_trigger()));
         }
@@ -28,8 +29,9 @@ struct Borble {
 #[async_trait]
 impl LazyWorker for Borble {
     type Output = String;
+    type Error = anyhow::Error;
 
-    async fn run(self, ctx: RunContext) -> turbosloth::Result<Self::Output> {
+    async fn run(self, ctx: RunContext) -> anyhow::Result<Self::Output> {
         let forble = self.forble.eval(&ctx).await?;
         println!("Borbling the forble");
         Ok((*forble).clone() + "borble")

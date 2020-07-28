@@ -16,7 +16,6 @@ use std::{
 };
 
 pub use turbosloth_macros::IntoLazy;
-pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync + 'static>>;
 
 #[derive(thiserror::Error, Debug, Clone)]
 #[error("A turbosloth LazyWorker \"{worker_debug_name}\" failed")]
@@ -31,11 +30,9 @@ impl<T: Any + Sized + Send + Sync + 'static> LazyReqs for T {}
 #[async_trait]
 pub trait LazyWorker: Send + Sync + 'static {
     type Output: LazyReqs;
+    type Error: Into<Box<dyn Error + 'static + Sync + Send>>;
 
-    async fn run(
-        self,
-        ctx: RunContext,
-    ) -> std::result::Result<Self::Output, Box<dyn Error + Send + Sync + 'static>>;
+    async fn run(self, ctx: RunContext) -> std::result::Result<Self::Output, Self::Error>;
 }
 
 type BoxedWorkerFuture = Pin<
@@ -75,6 +72,7 @@ where
                 .run(context)
                 .await
                 .map(|result| -> Arc<dyn Any + Send + Sync> { Arc::new(result) })
+                .map_err(|err| err.into())
         })
     }
 

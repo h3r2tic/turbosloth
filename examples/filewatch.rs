@@ -3,7 +3,7 @@ use hotwatch::Hotwatch;
 use lazy_static::lazy_static;
 use std::{path::PathBuf, sync::Mutex};
 use tokio::runtime::Runtime;
-use turbosloth::prelude::*;
+use turbosloth::*;
 
 lazy_static! {
     static ref FILE_WATCHER: Mutex<Hotwatch> = Mutex::new(Hotwatch::new().unwrap());
@@ -17,8 +17,9 @@ struct CountLinesInFile {
 #[async_trait]
 impl LazyWorker for CountLinesInFile {
     type Output = usize;
+    type Error = anyhow::Error;
 
-    async fn run(self, ctx: RunContext) -> turbosloth::Result<Self::Output> {
+    async fn run(self, ctx: RunContext) -> anyhow::Result<Self::Output> {
         let invalidation_trigger = ctx.get_invalidation_trigger();
 
         FILE_WATCHER
@@ -32,7 +33,7 @@ impl LazyWorker for CountLinesInFile {
         println!("Counting lines in file");
         std::fs::read_to_string(&self.path)
             .map(|contents| contents.lines().count())
-            .map_err(|err| anyhow::anyhow!("IO error: {:?}", err).into())
+            .map_err(|err| anyhow::anyhow!("IO error: {:?}", err))
     }
 }
 

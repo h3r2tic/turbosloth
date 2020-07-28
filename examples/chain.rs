@@ -1,5 +1,5 @@
 use tokio::runtime::Runtime;
-use turbosloth::prelude::*;
+use turbosloth::*;
 
 #[derive(Clone, Hash, IntoLazy)]
 struct Op1(i32);
@@ -7,8 +7,9 @@ struct Op1(i32);
 #[async_trait]
 impl LazyWorker for Op1 {
     type Output = i32;
+    type Error = anyhow::Error;
 
-    async fn run(self, _: RunContext) -> turbosloth::Result<Self::Output> {
+    async fn run(self, _: RunContext) -> anyhow::Result<Self::Output> {
         println!("Running Op1");
         Ok(self.0 * 10)
     }
@@ -20,8 +21,9 @@ struct Op2(Lazy<i32>);
 #[async_trait]
 impl LazyWorker for Op2 {
     type Output = i32;
+    type Error = anyhow::Error;
 
-    async fn run(self, ctx: RunContext) -> turbosloth::Result<Self::Output> {
+    async fn run(self, ctx: RunContext) -> anyhow::Result<Self::Output> {
         println!("Running Op2");
         Ok(*self.0.eval(&ctx).await? + 7)
     }
