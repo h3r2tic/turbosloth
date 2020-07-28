@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, RwLock, Weak},
 };
 
-pub(crate) trait SingleTypeCacheObj: Send + Sync {
+trait SingleTypeCacheObj: Send + Sync {
     fn get_or_insert_with(
         &self,
         identity: u64,
@@ -14,8 +14,8 @@ pub(crate) trait SingleTypeCacheObj: Send + Sync {
     ) -> Arc<dyn Any + Send + Sync + 'static>;
 }
 
-pub(crate) struct SingleTypeCache {
-    pub(crate) values: RwLock<HashMap<u64, Weak<LazyPayload>>>,
+struct SingleTypeCache {
+    values: RwLock<HashMap<u64, Weak<LazyPayload>>>,
 }
 
 impl SingleTypeCache {
@@ -63,12 +63,12 @@ impl SingleTypeCacheObj for SingleTypeCache {
     }
 }
 
-pub struct Cache {
-    pub(crate) typed_caches: RwLock<HashMap<TypeId, Arc<dyn SingleTypeCacheObj>>>,
+pub struct LazyCache {
+    typed_caches: RwLock<HashMap<TypeId, Arc<dyn SingleTypeCacheObj>>>,
 }
 
-impl Cache {
-    pub fn create() -> Arc<Cache> {
+impl LazyCache {
+    pub fn create() -> Arc<LazyCache> {
         Arc::new(Self {
             typed_caches: Default::default(),
         })

@@ -1,0 +1,1 @@
+On-demand async computation. WIP, but usable. See examples for now.
