@@ -9,17 +9,16 @@ lazy_static! {
     static ref FILE_WATCHER: Mutex<Hotwatch> = Mutex::new(Hotwatch::new().unwrap());
 }
 
-#[derive(Clone, Hash, IntoLazy)]
+#[derive(Clone, Hash)]
 struct CountLinesInFile {
     path: PathBuf,
 }
 
 #[async_trait]
 impl LazyWorker for CountLinesInFile {
-    type Output = usize;
-    type Error = anyhow::Error;
+    type Output = anyhow::Result<usize>;
 
-    async fn run(self, ctx: RunContext) -> anyhow::Result<Self::Output> {
+    async fn run(self, ctx: RunContext) -> Self::Output {
         let invalidation_trigger = ctx.get_invalidation_trigger();
 
         FILE_WATCHER

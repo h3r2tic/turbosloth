@@ -3,15 +3,14 @@ use turbosloth::*;
 
 static mut REFORBLE: Option<Box<dyn Fn() + Send + Sync>> = None;
 
-#[derive(Clone, Hash, IntoLazy)]
+#[derive(Clone, Hash)]
 struct Forble;
 
 #[async_trait]
 impl LazyWorker for Forble {
-    type Output = String;
-    type Error = anyhow::Error;
+    type Output = anyhow::Result<String>;
 
-    async fn run(self, ctx: RunContext) -> anyhow::Result<Self::Output> {
+    async fn run(self, ctx: RunContext) -> Self::Output {
         unsafe {
             REFORBLE = Some(Box::new(ctx.get_invalidation_trigger()));
         }
@@ -21,17 +20,16 @@ impl LazyWorker for Forble {
     }
 }
 
-#[derive(Clone, Hash, IntoLazy)]
+#[derive(Clone, Hash)]
 struct Borble {
     forble: Lazy<String>,
 }
 
 #[async_trait]
 impl LazyWorker for Borble {
-    type Output = String;
-    type Error = anyhow::Error;
+    type Output = anyhow::Result<String>;
 
-    async fn run(self, ctx: RunContext) -> anyhow::Result<Self::Output> {
+    async fn run(self, ctx: RunContext) -> Self::Output {
         let forble = self.forble.eval(&ctx).await?;
         println!("Borbling the forble");
         Ok((*forble).clone() + "borble")

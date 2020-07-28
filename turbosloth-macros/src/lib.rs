@@ -1,6 +1,6 @@
 extern crate proc_macro;
 
-use proc_macro::TokenStream;
+/*use proc_macro::TokenStream;
 use quote::quote;
 use syn::*;
 
@@ -10,6 +10,9 @@ pub fn derive_into_lazy(input: TokenStream) -> TokenStream {
     let name_ident = input.ident;
 
     proc_macro::TokenStream::from(quote! {
-        impl IntoLazy for #name_ident {}
+        impl IntoLazy for #name_ident {
+            // nothing right now
+        }
     })
 }
+*/

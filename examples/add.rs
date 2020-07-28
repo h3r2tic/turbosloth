@@ -1,7 +1,7 @@
 use tokio::runtime::Runtime;
 use turbosloth::*;
 
-#[derive(Clone, Hash, IntoLazy)]
+#[derive(Clone, Hash)]
 struct Add {
     a: i32,
     b: i32,
@@ -9,10 +9,9 @@ struct Add {
 
 #[async_trait]
 impl LazyWorker for Add {
-    type Output = i32;
-    type Error = anyhow::Error;
+    type Output = anyhow::Result<i32>;
 
-    async fn run(self, _: RunContext) -> anyhow::Result<Self::Output> {
+    async fn run(self, _: RunContext) -> Self::Output {
         println!("Running Add({}, {})", self.a, self.b);
         Ok(self.a + self.b)
     }

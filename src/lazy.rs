@@ -15,13 +15,26 @@ use std::{
     },
 };
 
-pub use turbosloth_macros::IntoLazy;
-
-#[derive(thiserror::Error, Debug, Clone)]
-#[error("A turbosloth LazyWorker \"{worker_debug_name}\" failed")]
+#[derive(Debug, Clone)]
 pub struct LazyEvalError {
     pub worker_debug_name: &'static str,
     pub source: Arc<dyn Error + Send + Sync + 'static>,
+}
+
+impl std::error::Error for LazyEvalError {
+    fn source(&self) -> std::option::Option<&(dyn Error + 'static)> {
+        Some(&*self.source)
+    }
+}
+
+impl std::fmt::Display for LazyEvalError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "A turbosloth LazyWorker \"{}\" failed",
+            self.worker_debug_name
+        )
+    }
 }
 
 pub trait LazyReqs: Any + Sized + Send + Sync + 'static {}
@@ -29,10 +42,34 @@ impl<T: Any + Sized + Send + Sync + 'static> LazyReqs for T {}
 
 #[async_trait]
 pub trait LazyWorker: Send + Sync + 'static {
-    type Output: LazyReqs;
-    type Error: Into<Box<dyn Error + 'static + Sync + Send>>;
+    type Output;
+    async fn run(self, ctx: RunContext) -> Self::Output;
+}
 
-    async fn run(self, ctx: RunContext) -> std::result::Result<Self::Output, Self::Error>;
+pub trait LazyWorkerImpl {
+    type Value: Send + Sync + 'static;
+    type Error: Into<Box<dyn Error + 'static + Sync + Send>>;
+    type Output;
+    fn run(self, ctx: RunContext) -> BoxedWorkerFuture;
+}
+
+impl<T: LazyReqs, E, W> LazyWorkerImpl for W
+where
+    W: LazyWorker<Output = std::result::Result<T, E>> + Clone + Hash,
+    E: Into<Box<dyn Error + 'static + Sync + Send>>,
+{
+    type Value = T;
+    type Error = E;
+    type Output = std::result::Result<T, E>;
+
+    fn run(self, ctx: RunContext) -> BoxedWorkerFuture {
+        Box::pin(async {
+            <Self as LazyWorker>::run(self, ctx)
+                .await
+                .map(|result| -> Arc<dyn Any + Send + Sync> { Arc::new(result) })
+                .map_err(|err| err.into())
+        })
+    }
 }
 
 type BoxedWorkerFuture = Pin<
@@ -47,16 +84,18 @@ type BoxedWorkerFuture = Pin<
     >,
 >;
 
-trait LazyWorkerObj: Send + Sync {
+pub trait LazyWorkerObj: Send + Sync {
     fn identity(&self) -> u64;
     fn clone_boxed(&self) -> Box<dyn LazyWorkerObj>;
     fn run_boxed(self: Box<Self>, context: RunContext) -> BoxedWorkerFuture;
     fn debug_name(&self) -> &'static str;
 }
 
-impl<T: LazyReqs, W> LazyWorkerObj for W
+impl<T: LazyReqs, E, W> LazyWorkerObj for W
 where
-    W: LazyWorker<Output = T> + Clone + Hash,
+    W: LazyWorker + Clone + Hash,
+    W: LazyWorkerImpl<Value = T, Error = E>,
+    E: Into<Box<dyn Error + 'static + Sync + Send>>,
 {
     fn identity(&self) -> u64 {
         <Self as LazyIdentity>::lazy_identity(self)
@@ -67,13 +106,7 @@ where
     }
 
     fn run_boxed(self: Box<Self>, context: RunContext) -> BoxedWorkerFuture {
-        Box::pin(async {
-            (*self)
-                .run(context)
-                .await
-                .map(|result| -> Arc<dyn Any + Send + Sync> { Arc::new(result) })
-                .map_err(|err| err.into())
-        })
+        <Self as LazyWorkerImpl>::run(*self, context)
     }
 
     fn debug_name(&self) -> &'static str {
@@ -192,6 +225,17 @@ pub struct Lazy<T: LazyReqs> {
     identity: u64,
     pub debug_name: &'static str,
     marker: PhantomData<T>,
+}
+
+impl<T: LazyReqs> Lazy<T> {
+    fn new(identity: u64, worker: Arc<dyn LazyWorkerObj>, debug_name: &'static str) -> Self {
+        Self {
+            inner: RwLock::new(LazyInner::Isolated(worker)),
+            identity,
+            debug_name,
+            marker: PhantomData,
+        }
+    }
 }
 
 impl<T: LazyReqs> Clone for Lazy<T> {
@@ -445,16 +489,17 @@ impl<T: Hash> LazyIdentity for T {
 
 pub trait IntoLazy: LazyIdentity
 where
-    Self: LazyWorker + Sized + Clone + Hash,
+    Self: Clone + Hash + Sized + LazyIdentity + LazyWorker + LazyWorkerImpl,
 {
-    fn into_lazy(self) -> Lazy<<Self as LazyWorker>::Output> {
-        let identity = self.lazy_identity();
+    fn into_lazy(self) -> crate::lazy::Lazy<<Self as crate::lazy::LazyWorkerImpl>::Value> {
+        let identity = <Self as crate::lazy::LazyIdentity>::lazy_identity(&self);
 
-        Lazy {
+        Lazy::new(
             identity,
-            inner: RwLock::new(LazyInner::Isolated(Arc::new(self))),
-            debug_name: std::any::type_name::<Self>(),
-            marker: PhantomData,
-        }
+            std::sync::Arc::new(self),
+            std::any::type_name::<Self>(),
+        )
     }
 }
+
+impl<W> IntoLazy for W where W: Clone + Hash + Sized + LazyIdentity + LazyWorker + LazyWorkerImpl {}
