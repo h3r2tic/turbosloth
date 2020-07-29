@@ -1,4 +1,3 @@
-use tokio::runtime::Runtime;
 use turbosloth::*;
 
 #[derive(Clone, Hash)]
@@ -29,10 +28,9 @@ impl LazyWorker for Op2 {
 
 fn main() -> anyhow::Result<()> {
     let cache = LazyCache::create();
-    let mut runtime = Runtime::new()?;
 
     let op12 = Op2(Op1(1).into_lazy()).into_lazy();
-    dbg!(*runtime.block_on(op12.eval(&cache))?);
+    dbg!(smol::block_on(op12.eval(&cache))?);
 
     Ok(())
 }

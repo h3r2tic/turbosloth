@@ -2,7 +2,6 @@ use anyhow::Context as _;
 use hotwatch::Hotwatch;
 use lazy_static::lazy_static;
 use std::{path::PathBuf, sync::Mutex};
-use tokio::runtime::Runtime;
 use turbosloth::*;
 
 lazy_static! {
@@ -38,7 +37,6 @@ impl LazyWorker for CountLinesInFile {
 
 fn main() -> anyhow::Result<()> {
     let cache = LazyCache::create();
-    let mut runtime = Runtime::new()?;
 
     let self_line_count = CountLinesInFile {
         path: PathBuf::from("examples/filewatch.rs"),
@@ -47,7 +45,7 @@ fn main() -> anyhow::Result<()> {
 
     loop {
         if !self_line_count.is_up_to_date() {
-            dbg!(runtime.block_on(self_line_count.eval(&cache))?);
+            dbg!(smol::block_on(self_line_count.eval(&cache))?);
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }

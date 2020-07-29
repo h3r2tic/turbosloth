@@ -1,4 +1,3 @@
-use tokio::runtime::Runtime;
 use turbosloth::*;
 
 static mut REFORBLE: Option<Box<dyn Fn() + Send + Sync>> = None;
@@ -38,21 +37,20 @@ impl LazyWorker for Borble {
 
 fn main() -> anyhow::Result<()> {
     let cache = LazyCache::create();
-    let mut runtime = Runtime::new()?;
 
     let boop = Borble {
         forble: Forble.into_lazy(),
     }
     .into_lazy();
-    dbg!(runtime.block_on(boop.eval(&cache))?);
-    dbg!(runtime.block_on(boop.eval(&cache))?);
+    dbg!(smol::block_on(boop.eval(&cache))?);
+    dbg!(smol::block_on(boop.eval(&cache))?);
 
     println!("Invalidating the forble!");
     unsafe {
         (REFORBLE.as_ref().unwrap())();
     }
 
-    dbg!(runtime.block_on(boop.eval(&cache))?);
+    dbg!(smol::block_on(boop.eval(&cache))?);
 
     Ok(())
 }
