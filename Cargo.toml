@@ -14,7 +14,8 @@ readme = "README.md"
 [dependencies]
 async-trait = "0.1"
 #tracing = "0.1"
-twox-hash = { version = "1.5", default-features = false }
+#twox-hash = { version = "1.5", default-features = false }
+wyhash = "0.4"
 
 [dev-dependencies]
 anyhow = "1.0"

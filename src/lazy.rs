@@ -114,7 +114,7 @@ where
     }
 }
 
-pub(crate) struct LazyPayload {
+pub struct LazyPayload {
     worker: Box<dyn LazyWorkerObj>,
     build_record: RwLock<BuildRecord>,
     rebuild_pending: AtomicBool,
@@ -206,12 +206,21 @@ pub(crate) struct BuildRecordDiff {
     pub removed_deps: Vec<BuildDependency>,
 }
 
-enum LazyInner {
+pub enum OpaqueLazy {
     Cached(Arc<LazyPayload>),
     Isolated(Arc<dyn LazyWorkerObj>),
 }
 
-impl Clone for LazyInner {
+impl OpaqueLazy {
+    pub fn is_up_to_date(&self) -> bool {
+        match self {
+            OpaqueLazy::Cached(payload) => !payload.rebuild_pending.load(Ordering::Relaxed),
+            OpaqueLazy::Isolated(..) => false,
+        }
+    }
+}
+
+impl Clone for OpaqueLazy {
     fn clone(&self) -> Self {
         match self {
             Self::Cached(cached) => Self::Cached(cached.clone()),
@@ -221,7 +230,7 @@ impl Clone for LazyInner {
 }
 
 pub struct Lazy<T: LazyReqs> {
-    inner: RwLock<LazyInner>,
+    inner: RwLock<OpaqueLazy>,
     identity: u64,
     pub debug_name: &'static str,
     marker: PhantomData<T>,
@@ -230,7 +239,7 @@ pub struct Lazy<T: LazyReqs> {
 impl<T: LazyReqs> Lazy<T> {
     fn new(identity: u64, worker: Arc<dyn LazyWorkerObj>, debug_name: &'static str) -> Self {
         Self {
-            inner: RwLock::new(LazyInner::Isolated(worker)),
+            inner: RwLock::new(OpaqueLazy::Isolated(worker)),
             identity,
             debug_name,
             marker: PhantomData,
@@ -348,10 +357,11 @@ impl AsRunContext for Arc<LazyCache> {
 impl<T: LazyReqs> Lazy<T> {
     pub fn is_up_to_date(&self) -> bool {
         let inner = self.inner.read().unwrap();
-        match &*inner {
-            LazyInner::Cached(payload) => !payload.rebuild_pending.load(Ordering::Relaxed),
-            LazyInner::Isolated(..) => false,
-        }
+        inner.is_up_to_date()
+    }
+
+    pub fn into_opaque(self) -> OpaqueLazy {
+        self.inner.into_inner().unwrap()
     }
 
     pub fn eval(
@@ -364,8 +374,8 @@ impl<T: LazyReqs> Lazy<T> {
             let mut inner = self.inner.write().unwrap();
 
             match &mut *inner {
-                LazyInner::Cached(cached) => cached.clone(),
-                LazyInner::Isolated(isolated) => {
+                OpaqueLazy::Cached(cached) => cached.clone(),
+                OpaqueLazy::Isolated(isolated) => {
                     let worker = isolated.clone_boxed();
                     let type_id = TypeId::of::<T>();
                     let cached = ctx
@@ -379,7 +389,7 @@ impl<T: LazyReqs> Lazy<T> {
                     let result = cached.clone();
 
                     // Connect to cache, and return the cached payload
-                    *inner = LazyInner::Cached(cached);
+                    *inner = OpaqueLazy::Cached(cached);
                     result
                 }
             }
@@ -481,7 +491,7 @@ pub trait LazyIdentity {
 
 impl<T: Hash> LazyIdentity for T {
     fn lazy_identity(&self) -> u64 {
-        let mut s = twox_hash::XxHash64::default();
+        let mut s = wyhash::WyHash::default();
         <Self as std::hash::Hash>::hash(&self, &mut s);
         s.finish()
     }

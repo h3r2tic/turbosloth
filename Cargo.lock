@@ -431,6 +431,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rand_core"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90bde5296fc891b0cef12a6d03ddccc162ce7b2aff54160af9338f8d40df6d19"
+
+[[package]]
 name = "redox_syscall"
 version = "0.1.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -505,14 +511,8 @@ dependencies = [
  "hotwatch",
  "lazy_static",
  "smol",
- "twox-hash",
+ "wyhash",
 ]
-
-[[package]]
-name = "twox-hash"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3bfd5b7557925ce778ff9b9ef90e3ade34c524b5ff10e239c69a42d546d2af56"
 
 [[package]]
 name = "unicode-xid"
@@ -603,4 +603,13 @@ checksum = "d59cefebd0c892fa2dd6de581e937301d8552cb44489cdff035c6187cb63fa5e"
 dependencies = [
  "winapi 0.2.8",
  "winapi-build",
+]
+
+[[package]]
+name = "wyhash"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fe26121db27575e4fb30ceded9806fbfe0edb489f170a17506d9ad0b1aca41c"
+dependencies = [
+ "rand_core",
 ]
