@@ -245,6 +245,10 @@ impl<T: LazyReqs> Lazy<T> {
             marker: PhantomData,
         }
     }
+
+    pub fn identity(&self) -> u64 {
+        self.identity
+    }
 }
 
 impl<T: LazyReqs> Clone for Lazy<T> {
@@ -358,6 +362,11 @@ impl<T: LazyReqs> Lazy<T> {
     pub fn is_up_to_date(&self) -> bool {
         let inner = self.inner.read().unwrap();
         inner.is_up_to_date()
+    }
+
+    pub fn is_stale(&self) -> bool {
+        let inner = self.inner.read().unwrap();
+        !inner.is_up_to_date()
     }
 
     pub fn into_opaque(self) -> OpaqueLazy {
