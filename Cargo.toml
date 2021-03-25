@@ -13,12 +13,13 @@ readme = "README.md"
 
 [dependencies]
 async-trait = "0.1"
+futures-lite = "1"
 #tracing = "0.1"
 #twox-hash = { version = "1.5", default-features = false }
-wyhash = "0.4"
+wyhash = "0.5"
 
 [dev-dependencies]
 anyhow = "1.0"
 hotwatch = "0.4"
 lazy_static = "1.4"
-smol = "0.3.3"
+smol = "1.2.5"

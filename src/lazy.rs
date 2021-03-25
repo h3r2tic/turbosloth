@@ -3,6 +3,7 @@ use crate::cache::*;
 use async_trait::async_trait;
 use std::{
     any::{Any, TypeId},
+    borrow::Cow,
     collections::HashSet,
     error::Error,
     future::Future,
@@ -45,6 +46,10 @@ pub trait LazyWorker: Send + Sync + 'static {
     type Output;
 
     async fn run(self, ctx: RunContext) -> Self::Output;
+
+    fn debug_description(&self) -> Option<Cow<'static, str>> {
+        None
+    }
 }
 
 pub trait LazyWorkerImpl {
@@ -88,7 +93,7 @@ pub trait LazyWorkerObj: Send + Sync {
     fn identity(&self) -> u64;
     fn clone_boxed(&self) -> Box<dyn LazyWorkerObj>;
     fn run_boxed(self: Box<Self>, context: RunContext) -> BoxedWorkerFuture;
-    fn debug_name(&self) -> &'static str;
+    fn debug_name(&self) -> Cow<'static, str>;
 }
 
 impl<T: LazyReqs, E, W> LazyWorkerObj for W
@@ -109,8 +114,12 @@ where
         <Self as LazyWorkerImpl>::run(*self, context)
     }
 
-    fn debug_name(&self) -> &'static str {
-        std::any::type_name::<Self>()
+    fn debug_name(&self) -> Cow<'static, str> {
+        if let Some(desc) = self.debug_description() {
+            desc
+        } else {
+            std::any::type_name::<Self>().into()
+        }
     }
 }
 
@@ -121,6 +130,10 @@ pub struct LazyPayload {
 }
 
 impl LazyPayload {
+    fn clear_build_artifact(&self) {
+        self.build_record.write().unwrap().artifact = None;
+    }
+
     fn set_new_build_result(
         &self,
         artifact: BuildArtifact,
@@ -148,13 +161,19 @@ impl LazyPayload {
     }
 
     fn invalidate(&self) {
-        self.rebuild_pending.store(true, Ordering::Relaxed);
+        self.rebuild_pending.store(true, Ordering::Release);
         let reverse_dependencies = self
             .build_record
             .read()
             .unwrap()
             .reverse_dependencies
             .clone();
+
+        /*println!(
+            "Invalidating {} ({} reverse deps)",
+            self.worker.debug_name(),
+            reverse_dependencies.len()
+        );*/
 
         for rev in reverse_dependencies {
             if let Some(rev) = rev.upgrade() {
@@ -218,6 +237,15 @@ impl OpaqueLazy {
             OpaqueLazy::Isolated(..) => false,
         }
     }
+
+    pub fn is_stale(&self) -> bool {
+        match self {
+            OpaqueLazy::Cached(payload) => payload.rebuild_pending.load(Ordering::Relaxed),
+            OpaqueLazy::Isolated(..) => {
+                panic!("is_stale called on an isolated Lazy reference. Evaluate first.")
+            }
+        }
+    }
 }
 
 impl Clone for OpaqueLazy {
@@ -230,7 +258,7 @@ impl Clone for OpaqueLazy {
 }
 
 pub struct Lazy<T: LazyReqs> {
-    inner: RwLock<OpaqueLazy>,
+    inner: Arc<RwLock<OpaqueLazy>>,
     identity: u64,
     pub debug_name: &'static str,
     marker: PhantomData<T>,
@@ -239,7 +267,7 @@ pub struct Lazy<T: LazyReqs> {
 impl<T: LazyReqs> Lazy<T> {
     fn new(identity: u64, worker: Arc<dyn LazyWorkerObj>, debug_name: &'static str) -> Self {
         Self {
-            inner: RwLock::new(OpaqueLazy::Isolated(worker)),
+            inner: Arc::new(RwLock::new(OpaqueLazy::Isolated(worker))),
             identity,
             debug_name,
             marker: PhantomData,
@@ -254,7 +282,7 @@ impl<T: LazyReqs> Lazy<T> {
 impl<T: LazyReqs> Clone for Lazy<T> {
     fn clone(&self) -> Self {
         Self {
-            inner: RwLock::new(self.inner.read().unwrap().clone()),
+            inner: self.inner.clone(),
             identity: self.identity,
             debug_name: self.debug_name,
             marker: PhantomData,
@@ -264,9 +292,17 @@ impl<T: LazyReqs> Clone for Lazy<T> {
 
 impl<T: LazyReqs> Hash for Lazy<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.identity.hash(state);
+        state.write_u64(self.identity)
     }
 }
+
+impl<T: LazyReqs> PartialEq for Lazy<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.identity == other.identity
+    }
+}
+
+impl<T: LazyReqs> Eq for Lazy<T> {}
 
 pub(crate) struct EvalTracker {
     pub dependencies: Mutex<HashSet<BuildDependency>>,
@@ -366,11 +402,7 @@ impl<T: LazyReqs> Lazy<T> {
 
     pub fn is_stale(&self) -> bool {
         let inner = self.inner.read().unwrap();
-        !inner.is_up_to_date()
-    }
-
-    pub fn into_opaque(self) -> OpaqueLazy {
-        self.inner.into_inner().unwrap()
+        inner.is_stale()
     }
 
     pub fn eval(
@@ -408,20 +440,24 @@ impl<T: LazyReqs> Lazy<T> {
         let worker_debug_name = self.debug_name;
 
         async move {
-            if payload.rebuild_pending.load(Ordering::Relaxed) {
+            if payload.rebuild_pending.load(Ordering::Acquire) {
                 let worker = payload.worker.clone_boxed();
                 let context = RunContext {
                     cache: ctx.cache,
                     tracker: Some(Arc::new(EvalTracker::new(payload.clone()))),
                 };
 
-                // tracing::info!("Evaluating {}", debug_name);
+                // println!("Evaluating {}", worker.debug_name());
+
+                // Clear the artifact so that any concurrent calls to this function (`eval`) will
+                // not just grab the previous artifact upon seeing that `rebuild_pending` is false.
+                payload.clear_build_artifact();
 
                 // Clear rebuild pending status before running the worker.
                 // If the asset becomes invalidated while the worker is running,
                 // it will need to be evaluated again next time.
 
-                payload.rebuild_pending.store(false, Ordering::Relaxed);
+                payload.rebuild_pending.store(false, Ordering::Release);
 
                 let tracker = context.tracker.as_ref().unwrap().clone();
                 let worker = worker.run_boxed(context);
@@ -471,7 +507,12 @@ impl<T: LazyReqs> Lazy<T> {
                     }
                 }
 
-                if payload.rebuild_pending.load(Ordering::Relaxed) {
+                if payload.rebuild_pending.load(Ordering::Acquire) {
+                    /*println!(
+                        "Build result invalidated while building for {}",
+                        worker_debug_name
+                    );*/
+
                     // The result was invalidated while the worker was running. Invalidate the new build record too.
                     payload.invalidate();
                 }
@@ -483,12 +524,24 @@ impl<T: LazyReqs> Lazy<T> {
                     .unwrap()
                     .map(|artifact| Arc::downcast::<T>(artifact).expect("downcast"))
             } else {
-                let build_record = payload.build_record.read().unwrap();
-                build_record
-                    .artifact
-                    .clone()
-                    .unwrap()
-                    .map(|artifact| Arc::downcast::<T>(artifact).expect("downcast"))
+                let mut retry_count = 0;
+
+                loop {
+                    if let Some(artifact) = &payload.build_record.read().unwrap().artifact {
+                        break artifact
+                            .clone()
+                            .map(|artifact| Arc::downcast::<T>(artifact).expect("downcast"));
+                    }
+
+                    // Another thread is still building the artifact.
+
+                    retry_count += 1;
+                    if retry_count > 1 {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+
+                    futures_lite::future::yield_now().await;
+                }
             }
         }
     }

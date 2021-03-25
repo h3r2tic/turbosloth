@@ -5,7 +5,8 @@ use std::{path::PathBuf, sync::Mutex};
 use turbosloth::*;
 
 lazy_static! {
-    static ref FILE_WATCHER: Mutex<Hotwatch> = Mutex::new(Hotwatch::new().unwrap());
+    static ref FILE_WATCHER: Mutex<Hotwatch> =
+        Mutex::new(Hotwatch::new_with_custom_delay(std::time::Duration::from_millis(200)).unwrap());
 }
 
 #[derive(Clone, Hash)]
@@ -23,8 +24,10 @@ impl LazyWorker for CountLinesInFile {
         FILE_WATCHER
             .lock()
             .unwrap()
-            .watch(self.path.clone(), move |_| {
-                invalidation_trigger();
+            .watch(self.path.clone(), move |event| {
+                if matches!(event, hotwatch::Event::Write(_)) {
+                    invalidation_trigger();
+                }
             })
             .with_context(|| format!("Trying to watch {:?}", self.path))?;
 
